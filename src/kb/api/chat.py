@@ -4,7 +4,7 @@ The turn runs in a worker thread (it blocks on the models and the LLM) and pushe
 queue; the HTTP response streams them as they arrive:
 
     session   {session_id, sticky_release}                       always first
-    status    {stage: condensing | searching, ...}               progress
+    status    {stage: queued | condensing | searching, ...}      progress (queued: waiting for another turn)
     context   {sources: [...]}                                   context sent to the LLM (for the UI panel)
     token     {text}                                             streamed answer pieces (raw model output)
     final     {answer, status, sources, references, ...}         the cleaned answer: replaces the streamed text
@@ -72,44 +72,55 @@ def final_payload(answer: Answer, *, standalone: str | None, condense_reason: st
 def run_turn(services: Services, user: User, session_id: str, question: str, provider: str | None,
              emit: Emit) -> None:
     """Answer one question in a session, reporting progress through `emit` (runs in a worker thread)."""
-    with services.model_lock:                     # one turn at a time on the shared models and GPU
-        conn = services.connect()
-        try:
-            session = sessions.get_session(conn, session_id, user.user_id)
-            history = sessions.recent_turns(conn, session_id, HISTORY_TURNS)
+    if not services.model_lock.acquire(blocking=False):   # one turn at a time on the shared models and GPU
+        emit("status", {"stage": "queued"})
+        services.model_lock.acquire()
+    try:
+        _run_turn_locked(services, user, session_id, question, provider, emit)
+    finally:
+        services.model_lock.release()
 
-            choice = resolve_release(question, session["sticky_release"])
-            if choice.sticky != session["sticky_release"]:
-                sessions.set_sticky_release(conn, session_id, choice.sticky)
 
-            if services.condenser is not None and needs_condensing(question, history):
-                emit("status", {"stage": "condensing"})
-            condensed = condense(services.condenser, question, history)
-            standalone = condensed.question if condensed.condensed else None
-            sessions.add_message(conn, session_id, "user", question, standalone_query=standalone)
+def _run_turn_locked(services: Services, user: User, session_id: str, question: str, provider: str | None,
+                     emit: Emit) -> None:
+    """The turn itself, with the model lock held."""
+    conn = services.connect()
+    try:
+        session = sessions.get_session(conn, session_id, user.user_id)
+        history = sessions.recent_turns(conn, session_id, HISTORY_TURNS)
 
-            release = f"R{choice.release}x" if choice.release else None
-            emit("status", {"stage": "searching", "standalone_query": standalone, "release": release,
-                            "release_reason": choice.reason, "sticky_release": choice.sticky})
-            pre_stages = [("condense", condensed.seconds * 1000,
-                           {"reason": condensed.reason, "standalone": standalone})] if condensed.seconds else []
-            request = SearchRequest(condensed.question, groups=user.search_groups, release=choice.release,
-                                    user_id=user.user_id, session_id=session_id)
-            answer = services.make_answerer(conn).answer(
-                request, provider=provider, asked=question, pre_stages=pre_stages,
-                on_token=lambda piece: emit("token", {"text": piece}),
-                on_context=lambda units: emit("context", context_payload(units)))
+        choice = resolve_release(question, session["sticky_release"])
+        if choice.sticky != session["sticky_release"]:
+            sessions.set_sticky_release(conn, session_id, choice.sticky)
 
-            message_id = sessions.add_message(conn, session_id, "assistant", answer.text, trace_id=answer.trace_id)
-            emit("final", final_payload(answer, standalone=standalone, condense_reason=condensed.reason,
-                                        release=release, release_reason=choice.reason, message_id=message_id))
-        except LLMError as e:
-            emit("error", {"message": str(e)})
-        except Exception as e:
-            log.exception("chat turn failed")
-            emit("error", {"message": f"{type(e).__name__}: {e}"})
-        finally:
-            conn.close()
+        if services.condenser is not None and needs_condensing(question, history):
+            emit("status", {"stage": "condensing"})
+        condensed = condense(services.condenser, question, history)
+        standalone = condensed.question if condensed.condensed else None
+        sessions.add_message(conn, session_id, "user", question, standalone_query=standalone)
+
+        release = f"R{choice.release}x" if choice.release else None
+        emit("status", {"stage": "searching", "standalone_query": standalone, "release": release,
+                        "release_reason": choice.reason, "sticky_release": choice.sticky})
+        pre_stages = [("condense", condensed.seconds * 1000,
+                       {"reason": condensed.reason, "standalone": standalone})] if condensed.seconds else []
+        request = SearchRequest(condensed.question, groups=user.search_groups, release=choice.release,
+                                user_id=user.user_id, session_id=session_id)
+        answer = services.make_answerer(conn).answer(
+            request, provider=provider, asked=question, pre_stages=pre_stages,
+            on_token=lambda piece: emit("token", {"text": piece}),
+            on_context=lambda units: emit("context", context_payload(units)))
+
+        message_id = sessions.add_message(conn, session_id, "assistant", answer.text, trace_id=answer.trace_id)
+        emit("final", final_payload(answer, standalone=standalone, condense_reason=condensed.reason,
+                                    release=release, release_reason=choice.reason, message_id=message_id))
+    except LLMError as e:
+        emit("error", {"message": str(e)})
+    except Exception as e:
+        log.exception("chat turn failed")
+        emit("error", {"message": f"{type(e).__name__}: {e}"})
+    finally:
+        conn.close()
 
 
 def stream_turn(services: Services, user: User, session: dict, question: str,

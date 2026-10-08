@@ -263,7 +263,7 @@ async function ask() {
   const card = addAssistantCard();
   const st = card.querySelector(".st"), stream = card.querySelector(".stream");
   let context = [], finished = false;
-  const stages = { condensing: "Understanding your follow-up…", searching: "Searching the documents…" };
+  const stages = { queued: "Waiting for another question to finish…", condensing: "Understanding your follow-up…", searching: "Searching the documents…" };
   try {
     const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json", "X-KB-User": state.user },
       body: JSON.stringify({ question: q, session_id: state.sessionId }) });

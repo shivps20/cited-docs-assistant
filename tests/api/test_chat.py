@@ -1,4 +1,5 @@
 import json
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -7,6 +8,7 @@ from fastapi.testclient import TestClient
 from kb.answer.pipeline import Answer, Source
 from kb.api import health, sessions
 from kb.api.app import create_app
+from kb.api.chat import run_turn
 from kb.api.services import Services
 from kb.api.users import User, UserDirectory
 from kb.core.config import get_settings
@@ -177,6 +179,29 @@ def test_chat_rejects_other_users_sessions_and_blank_questions(app_env):
     assert client.post("/api/chat", json={"question": "and?", "session_id": sid}).status_code == 404
     assert client.post("/api/chat", json={"question": "   "}).status_code == 422
     assert client.post("/api/chat", json={"question": "x", "provider": "gpt"}).status_code == 422
+
+
+def test_turn_waiting_for_the_model_lock_reports_queued(app_env):
+    _, svc, _ = app_env
+    conn = svc.connect()
+    sid = sessions.create_session(conn, USERS.resolve("guest"))["session_id"]
+    conn.close()
+    events, seen_queued = [], threading.Event()
+
+    def emit(name, data):
+        events.append((name, data))
+        if data.get("stage") == "queued":
+            seen_queued.set()
+
+    svc.model_lock.acquire()                                    # another turn is running
+    worker = threading.Thread(target=run_turn, args=(svc, USERS.resolve("guest"), sid, "Which ports?", None, emit))
+    worker.start()
+    assert seen_queued.wait(5)
+    assert not any(name == "final" for name, _ in events)       # nothing runs while the lock is held
+    svc.model_lock.release()
+    worker.join(5)
+    assert events[0] == ("status", {"stage": "queued"}) and events[-1][0] == "final"
+    assert not svc.model_lock.locked()                          # released after the turn
 
 
 def test_llm_failure_becomes_an_error_event(app_env):
