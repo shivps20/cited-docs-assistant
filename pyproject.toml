@@ -1,0 +1,48 @@
+[project]
+name = "kb"
+version = "0.1.0"
+description = "Local RAG knowledge-base assistant over PDF/PPTX technical documents"
+readme = "README.md"
+authors = [
+    { name = "Shiv Singh", email = "shivpsingh20@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "docling>=2.133.0",
+    "fastapi>=0.142.2",
+    "flagembedding>=1.4.2",
+    "httpx>=0.28.1",
+    "ollama>=0.6.3",
+    "openai>=3.24.0",
+    "pydantic-settings>=2.15.0",
+    "python-dotenv>=1.2.4",
+    "pyyaml>=6.0.3",
+    "qdrant-client>=1.19,<1.20",
+    "torch>=2.14.1",
+    "torchvision>=0.29.1",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[project.scripts]
+kb = "kb.cli.main:main"
+
+[build-system]
+requires = ["uv_build>=0.11.24,<0.12.0"]
+build-backend = "uv_build"
+
+# Torch from PyTorch's CUDA index (PyPI torch is CPU-only on Windows).
+# Driver 596.58 supports CUDA <= 13.2.
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cuda" }]
+torchvision = [{ index = "pytorch-cuda" }]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.10",
+]

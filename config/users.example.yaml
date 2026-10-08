@@ -1,0 +1,17 @@
+# Local users of the chat API and their access groups (example).
+# Copy to users.yaml (git-ignored) and adapt. The browser only says which user it is (X-KB-User
+# header); the server looks the groups up here, so a client can never claim more access than this
+# file gives it. Everyone also has the public group "all". There are no passwords: this is for a
+# single local machine, not a network service.
+#
+# Groups must match the allowed_groups values used in manifest.csv.
+
+default_user: guest
+
+users:
+  guest:
+    name: Guest
+    groups: []              # public documents only
+  internal_user:
+    name: Internal user
+    groups: [internal]      # also sees documents restricted to "internal"

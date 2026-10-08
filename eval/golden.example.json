@@ -1,0 +1,46 @@
+[
+  {
+    "id": "q001",
+    "type": "lookup",
+    "question": "Which port does the Acme application server listen on by default?",
+    "expected_answer": "The application server listens on port 8080 by default; change it in server.xml. See KB0012345 and https://support.example.com/kb/0012345.\n\nSource: Acme Platform Installation Guide, Section 3.2 Ports, p. 12",
+    "must_include": ["8080", "server.xml"],
+    "sources": [{"doc_id": "install-guide", "doc_title": "Acme Platform Installation Guide", "section": "3.2 Ports", "pages": [12]}],
+    "releases": ["R2024x+"],
+    "notes": "Fictional example of a lookup question.",
+    "status": "example"
+  },
+  {
+    "id": "q002",
+    "type": "howto",
+    "question": "How do I enable single sign-on?",
+    "expected_answer": "1. Export the service provider metadata.\n2. Import it into the identity provider.\n3. Import the identity provider metadata back.\n4. Enable federation.\n\nSource: Single Sign-On Setup, Section 2 Configuration, pp. 6-9",
+    "must_include": ["metadata", "identity provider"],
+    "sources": [{"doc_id": "sso-setup", "doc_title": "Single Sign-On Setup", "section": "2 Configuration", "pages": [6, 9]}],
+    "releases": ["R2025x", "R2026x"],
+    "notes": "Fictional example of a how-to question.",
+    "status": "example"
+  },
+  {
+    "id": "q003",
+    "type": "lookup",
+    "question": "Which tool captures traffic for a performance analysis?",
+    "expected_answer": "Use the tracing proxy and enable traffic capture before reproducing the scenario.\n\nSource: Performance Tracing (internal), Section 2.1 Capturing traffic, p. 5",
+    "must_include": ["traffic capture"],
+    "sources": [{"doc_id": "performance-tracing", "doc_title": "Performance Tracing (internal)", "section": "2.1 Capturing traffic", "pages": [5]}],
+    "releases": [],
+    "notes": "Cites a document restricted to the 'internal' group: kb eval uses it for the access-filter check.",
+    "status": "example"
+  },
+  {
+    "id": "q004",
+    "type": "unanswerable",
+    "question": "How much does an Acme Platform licence cost?",
+    "expected_answer": "Not in the documents.",
+    "must_include": [],
+    "sources": [],
+    "releases": [],
+    "notes": "No document covers pricing: the answer must be 'not found'.",
+    "status": "example"
+  }
+]

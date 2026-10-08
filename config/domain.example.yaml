@@ -1,0 +1,24 @@
+# Organisation-specific text rules (example). Copy to domain.yaml and adapt to your documents;
+# domain.yaml is git-ignored. Every key is optional: a key you set replaces the built-in default
+# (see src/kb/core/domain.py). Regexes use Python syntax; single-quote them in YAML.
+
+# Legal / footer lines removed wherever they appear in a document body.
+boilerplate_patterns:
+  - '^©\s*acme corp'
+  - '^confidential information\. copyright'
+  - '^without prior written authorization from acme'
+
+# Command-prompt lines of your products (in addition to the generic SQL, shell, XML and
+# web-server patterns) that are merged into code blocks when chunking.
+command_patterns:
+  - 'ACME>'
+  - '(?:acmectl|acme-admin)\b'
+
+# Knowledge-base article ids copied into answers when a cited section contains them.
+reference_patterns:
+  - '\bKB\d{6,}\b'
+reference_label: knowledge-base article numbers
+reference_example: KB0012345
+
+# Examples of "different words for the same thing" given to the LLM.
+synonym_examples: '"SQL queries" and "SQL statements", "licence" and "license", "set up" and "configure"'

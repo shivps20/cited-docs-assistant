@@ -1,0 +1,23 @@
+# Qdrant for the knowledge-base assistant. Run from the project root:
+#   docker compose -f deploy/docker-compose.yml up -d
+# The project name is fixed so the named volumes keep their names whatever folder this file is in.
+name: knowledgebase_assistant
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.19.1     # keep qdrant-client on 1.19.x to match
+    container_name: kb-qdrant
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6444:6333"        # REST + dashboard (localhost only)
+      - "127.0.0.1:6445:6334"        # gRPC
+    volumes:
+      # Named volumes, not Windows bind mounts: Qdrant warns bind mounts via WSL can corrupt data.
+      - qdrant_storage:/qdrant/storage
+      - qdrant_snapshots:/qdrant/snapshots
+    environment:
+      QDRANT__TELEMETRY_DISABLED: "true"
+
+volumes:
+  qdrant_storage:
+  qdrant_snapshots:

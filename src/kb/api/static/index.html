@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KB Assistant</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232f6fd6'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='white' font-family='sans-serif'%3EKB%3C/text%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #f5f6f8; --panel: #ffffff; --panel-2: #eef0f3; --text: #1c2229; --muted: #5f6a77; --line: #dde1e6;
+  --accent: #2f6fd6; --accent-soft: #e7eefb; --user: #e9f0fd; --ok: #1f7a4d; --ok-soft: #e4f4ea; --warn: #9a5a00;
+  --warn-soft: #fff3df; --bad: #b42318; --bad-soft: #fdecea; --code: #f2f3f5; --shadow: 0 1px 2px rgba(20, 30, 45, .06);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12161c; --panel: #1a2029; --panel-2: #222a35; --text: #e3e8ee; --muted: #9aa5b2; --line: #2e3845;
+    --accent: #6ea2ff; --accent-soft: #1d2b44; --user: #1c2a40; --ok: #5fd39a; --ok-soft: #15302a; --warn: #f0b35a;
+    --warn-soft: #3a2c16; --bad: #ff8a80; --bad-soft: #3b1d1d; --code: #232b37; --shadow: none;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--text); font: 14.5px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; }
+button, select, textarea, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+code, pre { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 13px; }
+a { color: var(--accent); }
+header { display: flex; align-items: center; gap: 12px; padding: 10px 18px; background: var(--panel); border-bottom: 1px solid var(--line); }
+header h1 { font-size: 16px; margin: 0; }
+.health { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.dot.ok { background: var(--ok); } .dot.bad { background: var(--warn); }
+.spacer { flex: 1; }
+header label { font-size: 12.5px; color: var(--muted); }
+header select { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; }
+.app { flex: 1; display: grid; grid-template-columns: 260px minmax(0, 1fr); min-height: 0; }
+aside { border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+.new-btn { margin: 12px; padding: 8px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.sessions { overflow: auto; padding: 0 8px 12px; }
+.sess { display: block; width: 100%; text-align: left; background: none; border: none; border-radius: 7px; padding: 7px 9px; margin: 1px 0; }
+.sess:hover { background: var(--panel-2); }
+.sess.active { background: var(--accent-soft); }
+.sess .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13.5px; }
+.sess .m { font-size: 11.5px; color: var(--muted); }
+main { display: flex; flex-direction: column; min-height: 0; }
+.messages { flex: 1; overflow: auto; padding: 20px 24px 8px; }
+.inner { max-width: 880px; margin: 0 auto; }
+.empty { color: var(--muted); text-align: center; margin-top: 12vh; }
+.empty h2 { color: var(--text); font-size: 18px; }
+.msg { margin: 14px 0; }
+.msg.user { display: flex; justify-content: flex-end; }
+.bubble { background: var(--user); border-radius: 12px 12px 3px 12px; padding: 8px 13px; max-width: 80%; white-space: pre-wrap; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; box-shadow: var(--shadow); }
+.card.notfound { border-color: var(--warn); background: var(--warn-soft); }
+.card.error { border-color: var(--bad); background: var(--bad-soft); }
+.status { font-size: 12.5px; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+.spinner { width: 12px; height: 12px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.interp { font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
+.interp b { color: var(--text); font-weight: 600; }
+.stream { white-space: pre-wrap; }
+.answer p { margin: 6px 0; }
+.answer ul, .answer ol { margin: 6px 0; padding-left: 22px; }
+.answer pre { background: var(--code); border-radius: 7px; padding: 9px 11px; overflow-x: auto; margin: 8px 0; }
+.answer code { background: var(--code); border-radius: 4px; padding: 0 4px; }
+.answer pre code { background: none; padding: 0; }
+.answer table { border-collapse: collapse; margin: 8px 0; font-size: 13px; display: block; overflow-x: auto; }
+.answer th, .answer td { border: 1px solid var(--line); padding: 4px 8px; }
+.answer h3, .answer h4 { margin: 10px 0 4px; font-size: 14.5px; }
+sup.cite { color: var(--accent); cursor: pointer; font-weight: 600; padding: 0 1px; }
+.sources { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; font-size: 13px; }
+.sources .h, .ctx summary { font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+.src { padding: 2px 6px; border-radius: 5px; }
+.src.flash { background: var(--accent-soft); }
+.notice { font-size: 12.5px; color: var(--warn); margin-top: 6px; }
+.ctx { margin-top: 8px; font-size: 13px; }
+.ctx summary { cursor: pointer; }
+.ctx .unit { border: 1px solid var(--line); border-radius: 7px; margin: 6px 0; padding: 6px 9px; }
+.ctx .unit .c { font-weight: 600; font-size: 12.5px; }
+.ctx .unit pre { white-space: pre-wrap; margin: 4px 0 0; max-height: 220px; overflow: auto; font-size: 12px; }
+.foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 10px; font-size: 12px; color: var(--muted); }
+.fb { display: inline-flex; gap: 4px; }
+.fb button { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 1px 8px; font-size: 13px; }
+.fb button.on { border-color: var(--accent); background: var(--accent-soft); }
+.fbc { display: flex; gap: 6px; margin-top: 6px; }
+.fbc input { flex: 1; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; font-size: 13px; }
+.fbc button { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 2px 10px; font-size: 13px; }
+.composer { border-top: 1px solid var(--line); background: var(--panel); padding: 10px 24px 14px; }
+.composer .inner { display: flex; flex-direction: column; gap: 6px; }
+.row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); }
+.chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px; background: var(--panel-2); color: var(--text); }
+.chip button { border: none; background: none; padding: 0; color: var(--muted); }
+.ask { display: flex; gap: 8px; align-items: flex-end; }
+.ask textarea { flex: 1; resize: none; min-height: 44px; max-height: 180px; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--bg); }
+.ask textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.ask button { border: none; border-radius: 10px; padding: 11px 18px; background: var(--accent); color: #fff; font-weight: 600; }
+.ask button:disabled { opacity: .5; cursor: default; }
+@media (max-width: 760px) {
+  .app { grid-template-columns: 1fr; }
+  aside { display: none; }
+  .messages, .composer { padding-left: 16px; padding-right: 16px; }
+  header { padding: 10px 16px; }
+  .bubble { max-width: 92%; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>Knowledge-Base Assistant</h1>
+  <span class="health" id="health" title="Checking…"><span class="dot"></span><span id="healthText">checking</span></span>
+  <span class="spacer"></span>
+  <label for="user">User</label>
+  <select id="user" aria-label="User"></select>
+</header>
+<div class="app">
+  <aside>
+    <button class="new-btn" id="newBtn" type="button">+ New conversation</button>
+    <div class="sessions" id="sessions"></div>
+  </aside>
+  <main>
+    <div class="messages" id="messages"><div class="inner" id="thread"></div></div>
+    <div class="composer">
+      <div class="inner">
+        <div class="row">
+          <span class="chip" id="releaseChip"></span>
+          <span id="hint">Name a release (e.g. R2025x) in a question to filter by it; it stays for the conversation.</span>
+        </div>
+        <div class="ask">
+          <textarea id="q" rows="1" placeholder="Ask about the documentation…  (Enter to send, Shift+Enter for a new line)"></textarea>
+          <button id="send" type="button">Ask</button>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const state = { user: null, sessionId: null, sticky: null, busy: false };
+
+// ------------------------------------------------------------------ API helpers
+async function api(path, options = {}) {
+  const res = await fetch(path, { ...options, headers: { "Content-Type": "application/json", "X-KB-User": state.user || "", ...(options.headers || {}) } });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `${res.status} ${res.statusText}`);
+  return res.status === 204 ? null : res.json();
+}
+
+// ------------------------------------------------------------------ rendering answers (escaped, then light Markdown)
+function inline(text) {
+  let t = esc(text);
+  t = t.replace(/`([^`]+)`/g, "<code>$1</code>");
+  t = t.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  t = t.replace(/(https?:\/\/[^\s<>()\]]+[^\s<>()\].,;:])/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+  t = t.replace(/\[(\d+)\]/g, '<sup class="cite" data-n="$1">[$1]</sup>');
+  return t;
+}
+
+function renderMarkdown(src) {
+  const out = [];
+  const parts = String(src).split(/```[^\n]*\n?/);
+  parts.forEach((part, i) => {
+    if (i % 2 === 1) { out.push(`<pre><code>${esc(part.replace(/\n$/, ""))}</code></pre>`); return; }
+    const lines = part.split("\n");
+    let list = null, para = [], table = [];
+    const flushPara = () => { if (para.length) { out.push(`<p>${para.map(inline).join("<br>")}</p>`); para = []; } };
+    const flushList = () => { if (list) { out.push(`<${list.tag}>${list.items.map((x) => `<li>${inline(x)}</li>`).join("")}</${list.tag}>`); list = null; } };
+    const flushTable = () => {
+      if (!table.length) return;
+      const rows = table.filter((r) => !/^\|\s*-{2,}/.test(r)).map((r) => r.replace(/^\||\|$/g, "").split("|").map((c) => c.trim()));
+      out.push(`<table>${rows.map((r, j) => `<tr>${r.map((c) => j === 0 ? `<th>${inline(c)}</th>` : `<td>${inline(c)}</td>`).join("")}</tr>`).join("")}</table>`);
+      table = [];
+    };
+    for (const raw of lines) {
+      const line = raw.trimEnd();
+      const bullet = line.match(/^\s*[-*•]\s+(.*)$/), num = line.match(/^\s*\d+[.)]\s+(.*)$/), head = line.match(/^#{1,4}\s+(.*)$/);
+      if (/^\s*\|.*\|\s*$/.test(line)) { flushPara(); flushList(); table.push(line.trim()); continue; }
+      flushTable();
+      if (bullet || num) {
+        flushPara();
+        const tag = bullet ? "ul" : "ol";
+        if (!list || list.tag !== tag) { flushList(); list = { tag, items: [] }; }
+        list.items.push((bullet || num)[1]);
+      } else if (head) { flushPara(); flushList(); out.push(`<h4>${inline(head[1])}</h4>`); }
+      else if (!line.trim()) { flushPara(); flushList(); }
+      else { flushList(); para.push(line); }
+    }
+    flushPara(); flushList(); flushTable();
+  });
+  return out.join("");
+}
+
+function scrollDown() { const m = $("messages"); m.scrollTop = m.scrollHeight; }
+
+function addUser(text) {
+  const div = document.createElement("div");
+  div.className = "msg user";
+  div.innerHTML = `<div class="bubble">${esc(text)}</div>`;
+  $("thread").appendChild(div);
+  scrollDown();
+}
+
+function addAssistantCard() {
+  const div = document.createElement("div");
+  div.className = "msg";
+  div.innerHTML = `<div class="card"><div class="status"><span class="spinner"></span><span class="st">Sending…</span></div>
+    <div class="interp" hidden></div><div class="stream" hidden></div><div class="answer"></div><div class="rest"></div></div>`;
+  $("thread").appendChild(div);
+  scrollDown();
+  return div.querySelector(".card");
+}
+
+function sourcesHtml(sources) {
+  if (!sources || !sources.length) return "";
+  return `<div class="sources"><div class="h">Sources</div>${sources.map((s) => `<div class="src" data-n="${s.n}">${esc(s.line)}</div>`).join("")}</div>`;
+}
+
+function contextHtml(units) {
+  if (!units || !units.length) return "";
+  return `<details class="ctx"><summary>Context sent to the LLM (${units.length})</summary>${units.map((u) =>
+    `<div class="unit"><div class="c">[${u.n}] ${esc(u.citation)} · score ${u.score} · ${u.tokens} tokens</div><pre>${esc(u.text)}</pre></div>`).join("")}</details>`;
+}
+
+function feedbackHtml(traceId, rating, comment) {
+  if (!traceId) return "";
+  return `<span class="fb" data-trace="${esc(traceId)}">
+      <button type="button" class="${rating === 1 ? "on" : ""}" data-rate="1" title="Helpful">👍</button>
+      <button type="button" class="${rating === -1 ? "on" : ""}" data-rate="-1" title="Not helpful">👎</button></span>
+    <span class="fbsaved">${rating ? "feedback saved" + (comment ? ": " + esc(comment) : "") : ""}</span>`;
+}
+
+function finishCard(card, f, contextUnits) {
+  card.querySelector(".status").remove();
+  card.querySelector(".stream").remove();
+  if (f.status !== "answered") card.classList.add("notfound");
+  const interp = card.querySelector(".interp");
+  const bits = [];
+  if (f.standalone_query) bits.push(`Interpreted as: <b>${esc(f.standalone_query)}</b>`);
+  if (f.release) bits.push(`Release: <b>${esc(f.release)}</b>${f.release_reason === "sticky" ? " (kept from the conversation)" : ""}`);
+  if (bits.length) { interp.innerHTML = bits.join(" · "); interp.hidden = false; }
+  card.querySelector(".answer").innerHTML = renderMarkdown(f.answer);
+  const notices = (f.notices || []).map((n) => `<div class="notice">${esc(n)}</div>`).join("");
+  const timings = f.timings_ms || {};
+  const retrieval = ["embed", "search", "rerank", "assemble"].reduce((a, k) => a + (timings[k] || 0), 0);
+  const meta = [
+    f.status === "answered" ? null : `not found (${f.refused_by === "gate" ? "no relevant documents" : "the documents do not contain the answer"})`,
+    `retrieval ${(retrieval / 1000).toFixed(1)} s`,
+    timings.generate ? `generation ${(timings.generate / 1000).toFixed(1)} s · ${esc(f.model)}${f.tokens_per_s ? ` · ${f.tokens_per_s} tok/s` : ""}` : null,
+    `<span title="trace id">trace ${esc((f.trace_id || "").slice(0, 8))}</span>`,
+  ].filter(Boolean).join(" · ");
+  card.querySelector(".rest").innerHTML = sourcesHtml(f.sources) + notices + contextHtml(contextUnits) +
+    `<div class="foot">${feedbackHtml(f.trace_id, null)}<span>${meta}</span></div>`;
+}
+
+// ------------------------------------------------------------------ asking (POST /api/chat, server-sent events)
+async function ask() {
+  const q = $("q").value.trim();
+  if (!q || state.busy) return;
+  state.busy = true; $("send").disabled = true; $("q").value = ""; autoGrow();
+  if (!$("thread").querySelector(".msg")) $("thread").innerHTML = "";
+  addUser(q);
+  const card = addAssistantCard();
+  const st = card.querySelector(".st"), stream = card.querySelector(".stream");
+  let context = [], finished = false;
+  const stages = { condensing: "Understanding your follow-up…", searching: "Searching the documents…" };
+  try {
+    const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json", "X-KB-User": state.user },
+      body: JSON.stringify({ question: q, session_id: state.sessionId }) });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `${res.status} ${res.statusText}`);
+    const reader = res.body.getReader(), decoder = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let cut;
+      while ((cut = buf.indexOf("\n\n")) >= 0) {
+        const block = buf.slice(0, cut); buf = buf.slice(cut + 2);
+        let event = "message", data = "";
+        for (const line of block.split("\n")) {
+          if (line.startsWith("event: ")) event = line.slice(7);
+          else if (line.startsWith("data: ")) data += line.slice(6);
+        }
+        const d = data ? JSON.parse(data) : {};
+        if (event === "session") { state.sessionId = d.session_id; setSticky(d.sticky_release); }
+        else if (event === "status") {
+          st.textContent = d.stage === "searching" && d.release ? `Searching the documents (${d.release})…` : (stages[d.stage] || d.stage);
+          if (d.standalone_query) { const i = card.querySelector(".interp"); i.innerHTML = `Interpreted as: <b>${esc(d.standalone_query)}</b>`; i.hidden = false; }
+          if ("sticky_release" in d) setSticky(d.sticky_release);
+        }
+        else if (event === "context") { context = d.sources; st.textContent = "Writing the answer…"; }
+        else if (event === "token") { stream.hidden = false; stream.textContent += d.text; scrollDown(); }
+        else if (event === "final") { finished = true; finishCard(card, d, context); }
+        else if (event === "error") { finished = true; showError(card, d.message); }
+      }
+    }
+    if (!finished) showError(card, "The connection closed before the answer was complete.");
+  } catch (err) {
+    showError(card, err.message);
+  } finally {
+    state.busy = false; $("send").disabled = false; $("q").focus(); scrollDown();
+    loadSessions();
+  }
+}
+
+function showError(card, message) {
+  card.classList.add("error");
+  card.querySelector(".status")?.remove();
+  card.querySelector(".answer").innerHTML = `<p><strong>Something went wrong:</strong> ${esc(message)}</p>`;
+}
+
+// ------------------------------------------------------------------ release chip
+function setSticky(release) {
+  state.sticky = release || null;
+  $("releaseChip").innerHTML = state.sticky
+    ? `Release: <b>${esc(state.sticky)}</b> <button type="button" id="clearRelease" title="Search all releases">✕</button>`
+    : "All releases";
+}
+
+async function clearRelease() {
+  if (!state.sessionId) { setSticky(null); return; }
+  try { await api(`/api/sessions/${state.sessionId}/release`, { method: "PUT", body: JSON.stringify({ release: null }) }); setSticky(null); }
+  catch (err) { alert(err.message); }
+}
+
+// ------------------------------------------------------------------ sessions
+async function loadSessions() {
+  try {
+    const { sessions } = await api("/api/sessions");
+    $("sessions").innerHTML = sessions.map((s) => `<button type="button" class="sess ${s.session_id === state.sessionId ? "active" : ""}" data-session="${s.session_id}">
+        <div class="t">${esc(s.title)}</div><div class="m">${esc((s.last_active_at || "").slice(0, 16).replace("T", " "))} · ${s.message_count} messages${s.sticky_release ? " · " + esc(s.sticky_release) : ""}</div></button>`).join("")
+      || '<div class="sess"><div class="m">No conversations yet.</div></div>';
+  } catch (err) { $("sessions").innerHTML = `<div class="sess"><div class="m">${esc(err.message)}</div></div>`; }
+}
+
+function showEmpty() {
+  $("thread").innerHTML = `<div class="empty"><h2>Ask the documentation</h2><p>Answers cite the document, section and page they come from.<br>Follow-up questions use the conversation; a release you name stays for the conversation.</p></div>`;
+}
+
+function newConversation() { state.sessionId = null; setSticky(null); showEmpty(); loadSessions(); $("q").focus(); }
+
+async function openSession(id) {
+  try {
+    const s = await api(`/api/sessions/${id}`);
+    state.sessionId = s.session_id; setSticky(s.sticky_release);
+    $("thread").innerHTML = "";
+    for (const m of s.messages) {
+      if (m.role === "user") { addUser(m.content); continue; }
+      const div = document.createElement("div");
+      div.className = "msg";
+      const nf = m.gate_decision && m.gate_decision !== "pass" || /^I could not find the answer/.test(m.content);
+      div.innerHTML = `<div class="card ${nf ? "notfound" : ""}"><div class="answer">${renderMarkdown(m.content)}</div>${sourcesHtml(m.sources)}
+        <div class="foot">${feedbackHtml(m.trace_id, m.rating, m.comment)}<span>trace ${esc((m.trace_id || "").slice(0, 8))}</span></div></div>`;
+      $("thread").appendChild(div);
+    }
+    if (!s.messages.length) showEmpty();
+    loadSessions(); scrollDown();
+  } catch (err) { alert(err.message); }
+}
+
+// ------------------------------------------------------------------ feedback
+async function rate(button) {
+  const box = button.closest(".fb"), trace = box.dataset.trace, rating = +button.dataset.rate;
+  try {
+    await api("/api/feedback", { method: "POST", body: JSON.stringify({ trace_id: trace, rating }) });
+    box.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b === button));
+    const foot = box.closest(".foot");
+    foot.querySelector(".fbsaved").textContent = "feedback saved";
+    if (!foot.parentElement.querySelector(".fbc")) {
+      const c = document.createElement("div");
+      c.className = "fbc";
+      c.innerHTML = `<input type="text" maxlength="1000" placeholder="Optional: what was good or wrong?"><button type="button">Save comment</button>`;
+      c.querySelector("button").onclick = async () => {
+        const comment = c.querySelector("input").value.trim();
+        const current = +box.querySelector("button.on").dataset.rate;
+        try {
+          await api("/api/feedback", { method: "POST", body: JSON.stringify({ trace_id: trace, rating: current, comment: comment || null }) });
+          foot.querySelector(".fbsaved").textContent = "feedback saved" + (comment ? ": " + comment : "");
+          c.remove();
+        } catch (err) { alert(err.message); }
+      };
+      foot.after(c);
+    }
+  } catch (err) { alert(err.message); }
+}
+
+// ------------------------------------------------------------------ users and health
+async function loadUsers() {
+  const data = await api("/api/users");
+  let saved = null;
+  try { saved = localStorage.getItem("kb-user"); } catch (_) { /* storage unavailable */ }
+  const ids = data.users.map((u) => u.user_id);
+  state.user = ids.includes(saved) ? saved : data.default_user;
+  $("user").innerHTML = data.users.map((u) => `<option value="${esc(u.user_id)}" ${u.user_id === state.user ? "selected" : ""}>${esc(u.name)}${u.groups.length ? " (" + esc(u.groups.join(", ")) + ")" : " (public only)"}</option>`).join("");
+}
+
+async function checkHealth() {
+  try {
+    const h = await api("/api/health");
+    const dot = $("health").querySelector(".dot");
+    dot.className = "dot " + (h.status === "ok" ? "ok" : "bad");
+    $("healthText").textContent = h.status === "ok" ? "ready" : "degraded";
+    $("health").title = Object.entries(h.checks).map(([k, c]) => `${c.ok ? "✓" : "✗"} ${k}: ${c.detail}`).join("\n");
+  } catch (err) { $("healthText").textContent = "server unreachable"; $("health").querySelector(".dot").className = "dot bad"; }
+}
+
+// ------------------------------------------------------------------ events
+function autoGrow() { const t = $("q"); t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 180) + "px"; }
+$("q").addEventListener("input", autoGrow);
+$("q").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } });
+$("send").onclick = ask;
+$("newBtn").onclick = newConversation;
+$("user").onchange = () => {
+  state.user = $("user").value;
+  try { localStorage.setItem("kb-user", state.user); } catch (_) { /* ignore */ }
+  newConversation();
+};
+document.addEventListener("click", (e) => {
+  const sess = e.target.closest("[data-session]");
+  if (sess && !state.busy) { openSession(sess.dataset.session); return; }
+  if (e.target.closest("#clearRelease")) { clearRelease(); return; }
+  const rateBtn = e.target.closest("[data-rate]");
+  if (rateBtn) { rate(rateBtn); return; }
+  const cite = e.target.closest("sup.cite");
+  if (cite) {
+    const card = cite.closest(".card");
+    const src = card && card.querySelector(`.src[data-n="${cite.dataset.n}"]`);
+    if (src) { src.scrollIntoView({ behavior: "smooth", block: "nearest" }); src.classList.add("flash"); setTimeout(() => src.classList.remove("flash"), 1500); }
+  }
+});
+
+(async () => {
+  showEmpty(); setSticky(null);
+  try { await loadUsers(); } catch (err) { $("healthText").textContent = "server unreachable"; return; }
+  checkHealth(); setInterval(checkHealth, 30000);
+  loadSessions();
+  $("q").focus();
+})();
+</script>
+</body>
+</html>

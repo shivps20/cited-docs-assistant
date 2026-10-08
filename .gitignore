@@ -1,0 +1,29 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.ruff_cache
+.pytest_cache/
+
+# Local runtime data and models (documents, parse cache, SQLite, evaluation reports)
+data/
+models/
+storage/
+snapshots/
+/static/
+
+# Secrets
+.env
+
+# Organisation-specific configuration and data: kept on this machine only.
+# The repository has fictional examples instead (*.example.*); copy them to start.
+config/manifest.csv
+config/users.yaml
+config/domain.yaml
+eval/golden.json
+
+# Local notes and working files (not versioned)
+docs/local/
+pr/
+eval/archive/
+.claude/
