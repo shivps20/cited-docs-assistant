@@ -15,7 +15,7 @@ from kb.llm.prompts import (
     system_prompt,
 )
 from kb.llm.providers import Generation, LLMError, OllamaProvider, select_provider
-from kb.retrieve.assemble import ContextUnit
+from kb.retrieve.assemble import ContextUnit, SameText
 from kb.retrieve.gate import gate
 from kb.retrieve.pipeline import SearchRequest, SearchResult
 from kb.retrieve.search import Candidate
@@ -103,6 +103,14 @@ def test_progress_bars_patched_off():
 
 def test_source_line():
     assert source_line(2, unit()) == "[2] SAML (R2026x), Section 2.2.3 Configure Metadata, pp. 9-10"
+
+
+def test_source_line_names_same_text_copies():
+    u = unit("oracle", "3.4", (8, 8))
+    u.same_text = [SameText("mssql", "MSSQL", "mssql#3.4", "3.4", 8, 9, "R2026x")]
+    assert source_line(1, u) == ("[1] ORACLE (R2026x), Section 3.4 Configure Metadata, p. 8"
+                                 " · same text: MSSQL (R2026x), Section 3.4, pp. 8-9")
+    assert "MSSQL" not in build_messages("q", [u])[1]["content"]       # the LLM sees the text once, unchanged
 
 
 # ------------------------------------------------------------------------------------------- gate

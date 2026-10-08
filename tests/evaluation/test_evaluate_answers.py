@@ -11,7 +11,7 @@ from kb.llm.judge import (
 )
 from kb.llm.prompts import NOT_FOUND
 from kb.llm.providers import Generation
-from kb.retrieve.assemble import ContextUnit
+from kb.retrieve.assemble import ContextUnit, SameText
 from kb.retrieve.gate import GateDecision
 
 GOLDEN = [
@@ -87,6 +87,18 @@ def test_run_answer_eval_scores_every_dimension():
     assert len(judged) == 3                                     # refusals are not judged
     q1 = next(q for q in report["questions"] if q["qid"] == "q1")
     assert q1["unsupported"] == ["listens on 9999"] and q1["retrieval_ms"] == 3030
+
+
+def test_same_text_copy_counts_as_cited_and_in_context():
+    kept = unit("oracle", (20, 20))
+    kept.same_text = [SameText("mssql", "mssql", "mssql#1", "1", 22, 22)]
+    cited = source(1, "oracle", (20, 20))
+    cited.same_text = [{"doc_id": "mssql", "title": "mssql", "section": "1", "page_start": 22, "page_end": 22,
+                        "release": ""}]
+    q2 = {**GOLDEN[1], "sources": [{"doc_id": "mssql", "pages": [22]}]}     # golden names only the MSSQL guide
+    report = run_answer_eval(lambda q: answer("Both use TomEE [1].", sources=[cited], context=[kept]), [q2])
+    r = report["questions"][0]
+    assert (r["cited_correct"], r["golden_docs_cited"], r["context_hit"]) == (1, 1, True)
 
 
 def test_parse_verdict_reads_claims_and_reports_bad_json():

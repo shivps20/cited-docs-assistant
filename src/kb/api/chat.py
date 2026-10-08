@@ -46,7 +46,8 @@ def context_payload(context: list[ContextUnit]) -> dict:
     """The numbered context units, as the UI's context panel shows them."""
     return {"sources": [{"n": n, "citation": u.citation, "doc_id": u.doc_id, "title": u.title,
                          "section": u.section_number, "heading": u.heading, "pages": u.pages, "release": u.release,
-                         "score": round(u.score, 4), "tokens": u.tokens, "text": u.text}
+                         "score": round(u.score, 4), "tokens": u.tokens, "text": u.text,
+                         "same_text": [s.citation for s in u.same_text]}
                         for n, u in enumerate(context, start=1)]}
 
 
@@ -58,7 +59,8 @@ def final_payload(answer: Answer, *, standalone: str | None, condense_reason: st
         "answer": answer.text, "status": answer.status, "refused_by": answer.refused_by,
         "gate": {"decision": answer.gate.decision, "top_score": answer.gate.top_score, "explain": answer.gate.explain()},
         "sources": [{"n": s.n, "line": s.line, "doc_id": s.doc_id, "title": s.title, "section": s.section,
-                     "heading": s.heading, "page_start": s.page_start, "page_end": s.page_end, "release": s.release}
+                     "heading": s.heading, "page_start": s.page_start, "page_end": s.page_end, "release": s.release,
+                     "same_text": s.same_text}
                     for s in answer.sources],
         "references": answer.references, "notices": answer.notices, "invalid_citations": answer.invalid_citations,
         "standalone_query": standalone, "condense_reason": condense_reason,

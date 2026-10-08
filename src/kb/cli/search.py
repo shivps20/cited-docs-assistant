@@ -54,6 +54,8 @@ def search_command(args) -> int:
     print(f"\nassembled context: {len(result.context)} units, {sum(u.tokens for u in result.context)} tokens")
     for i, u in enumerate(result.context, start=1):
         print(f"  [{i}] {u.kind:<7} {u.tokens:>5} tok  {u.citation}")
+        for s in u.same_text:
+            print(f"      same text: {s.citation} (not sent again)")
         if args.context:
             print(f"\n{u.header}\n\n{u.text}\n")
     timings = "  ".join(f"{k} {v:.0f} ms" for k, v in result.timings_ms.items())
@@ -113,7 +115,8 @@ def ask_command(args) -> int:
         """Print the numbered context units before generation starts (--show-context)."""
         print("--- context sent to the LLM ---")
         for i, u in enumerate(context, start=1):
-            print(f"\n[{i}] {u.citation}  ({u.tokens} tokens)\n{u.text}")
+            same = f"  same text: {'; '.join(s.citation for s in u.same_text)}" if u.same_text else ""
+            print(f"\n[{i}] {u.citation}  ({u.tokens} tokens){same}\n{u.text}")
         print("\n--- end of context ---\n")
 
     try:

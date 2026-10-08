@@ -7,7 +7,8 @@ full access and no release filter. Per question:
   must_include  share of the question's key strings present in the answer
   refs / urls   share of the expected answer's article numbers (domain reference_patterns) and URLs present
   citations     precision: share of cited sources on a golden document + pages;
-                doc recall: share of golden documents cited (matters for comparisons)
+                doc recall: share of golden documents cited (matters for comparisons).
+                A source's near-identical copies in other documents (same_text) count as cited too.
   context_hit   the context sent to the LLM contained a golden source (separates retrieval
                 failures from generation failures)
   style         answer had no [n] markers / tacked-on not-found sentence / talk about "the sources"
@@ -83,6 +84,19 @@ def contains(answer: str, needle: str) -> bool:
     return normalise(needle) in normalise(answer)
 
 
+def _locations(source) -> list[tuple[str, int, int]]:
+    """(doc_id, page_start, page_end) of a cited source or context unit and of its near-identical copies
+    (dicts on a Source, SameText objects on a ContextUnit)."""
+    copies = [(s["doc_id"], s["page_start"], s["page_end"]) if isinstance(s, dict) else (s.doc_id, s.page_start, s.page_end)
+              for s in source.same_text]
+    return [(source.doc_id, source.page_start, source.page_end), *copies]
+
+
+def _on_golden(source, golden_sources: list[dict]) -> bool:
+    """Is the source, or one of its copies, on a golden document and pages?"""
+    return any(_overlaps(doc, start, end, golden_sources) for doc, start, end in _locations(source))
+
+
 def score_answer(q: dict, answer: Answer, verdict: Verdict | None, total_ms: float) -> AnswerResult:
     """Score one Answer against its golden question (and the judge's verdict, if any)."""
     answerable = bool(q["sources"])
@@ -95,7 +109,8 @@ def score_answer(q: dict, answer: Answer, verdict: Verdict | None, total_ms: flo
     refs = sorted(set(get_domain().find_references(expected))) if answerable else []
     urls = sorted({u.rstrip(".") for u in URL.findall(expected)}) if answerable else []
     golden_docs = {s["doc_id"] for s in q["sources"]}
-    correct = [s for s in answer.sources if _overlaps(s.doc_id, s.page_start, s.page_end, q["sources"])]
+    correct = [s for s in answer.sources if _on_golden(s, q["sources"])]
+    cited_docs = {doc for s in answer.sources for doc, _, _ in _locations(s)}
     cited_markers = bool(re.search(r"\[\d+\]", text))
     timings = answer.timings_ms
 
@@ -106,8 +121,8 @@ def score_answer(q: dict, answer: Answer, verdict: Verdict | None, total_ms: flo
         ref_found=sum(1 for x in refs if x in text), ref_total=len(refs),
         urls_found=sum(1 for u in urls if u in text), urls_total=len(urls),
         cited=len(answer.sources), cited_correct=len(correct),
-        golden_docs=len(golden_docs), golden_docs_cited=len(golden_docs & {s.doc_id for s in answer.sources}),
-        context_hit=any(_overlaps(u.doc_id, u.page_start, u.page_end, q["sources"]) for u in answer.context),
+        golden_docs=len(golden_docs), golden_docs_cited=len(golden_docs & cited_docs),
+        context_hit=any(_on_golden(u, q["sources"]) for u in answer.context),
         no_markers=answered and not cited_markers,
         dropped_not_found=any("contradictory" in n for n in answer.notices),
         meta_talk=bool(META_TALK.search(text)),

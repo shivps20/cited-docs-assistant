@@ -69,7 +69,8 @@ def judge(result: SearchResult, sources: list[dict]) -> tuple[int | None, bool, 
     """(rank of first hit, context has a hit, every cited document hit in top 5)."""
     first = next((rank for rank, c in enumerate(result.candidates, start=1)
                   if _overlaps(c.doc_id, c.page_start, c.page_end, sources)), None)
-    context_hit = any(_overlaps(u.doc_id, u.page_start, u.page_end, sources) for u in result.context)
+    context_hit = any(_overlaps(x.doc_id, x.page_start, x.page_end, sources)       # a unit or its same-text copies
+                      for u in result.context for x in (u, *u.same_text))
     top5 = result.candidates[:5]
     cited_docs = {s["doc_id"] for s in sources}
     all_docs = all(any(_overlaps(c.doc_id, c.page_start, c.page_end, [s for s in sources if s["doc_id"] == d])

@@ -27,7 +27,7 @@ uv run kb search "..." --mode dense --no-rerank --context        # compare modes
 
 Query embedding and reranking run on the CPU (the GPU stays free for the LLM). Every search is traced in the `traces` / `trace_stages` tables.
 
-Search retrieves 30 candidates (dense + sparse, fused), reranks the first `KB_RERANK_TOP` of them with the cross-encoder, then assembles up to 6 context units (3,000 tokens) for the LLM; near-identical sections (the same section in two variants of a guide) are sent once.
+Search retrieves 30 candidates (dense + sparse, fused), reranks the first `KB_RERANK_TOP` of them with the cross-encoder, then assembles up to 6 context units (3,000 tokens) for the LLM; near-identical sections (the same section in two variants of a guide) are sent once, and the copy is named in the source line ("· same text: …") so both documents are cited.
 
 ### Tuning flags
 

@@ -188,5 +188,8 @@ def missing_references(answer: str, cited: Sequence[tuple[int, ContextUnit]], li
 
 
 def source_line(n: int, unit: ContextUnit) -> str:
-    """'[2] Admin Guide (R2026x), Section 2.2.3 Configure the Metadata, pp. 9-10'."""
-    return f"[{n}] {unit.title} ({release_text(unit.release)}), Section {unit.heading}, {unit.pages}"
+    """'[2] Admin Guide (R2026x), Section 2.2.3 Configure the Metadata, pp. 9-10', plus any near-identical
+    copies: '· same text: Other Guide (R2026x), Section 2.2.3, p. 9'."""
+    line = f"[{n}] {unit.title} ({release_text(unit.release)}), Section {unit.heading}, {unit.pages}"
+    copies = [f"{s.title} ({release_text(s.release)}), Section {s.section_number}, {s.pages}" for s in unit.same_text]
+    return line + (" · same text: " + "; ".join(copies) if copies else "")

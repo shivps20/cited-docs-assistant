@@ -148,6 +148,12 @@ def test_assemble_keeps_one_of_two_near_identical_sections(conn):
                          "text, token_count) VALUES (?, ?, '4 Install', 1, 5, 6, ?, 60)", (sid, doc, text))
     units = assemble(conn, [cand("ora#4#0", section="ora#4"), cand("sql#4#0", section="sql#4"), cand("small#2#0")])
     assert [u.section_id for u in units] == ["ora#4", "small#2"]     # the lower-ranked near copy is skipped
+    assert [(s.doc_id, s.section_id, s.pages) for s in units[0].same_text] == [("sql", "sql#4", "pp. 5-6")]
+    assert units[1].same_text == []
+    # a copy ranked below the unit limit is still recorded on its twin
+    capped = assemble(conn, [cand("ora#4#0", section="ora#4"), cand("small#2#0"), cand("sql#4#0", section="sql#4")],
+                      max_units=2)
+    assert [s.doc_id for s in capped[0].same_text] == ["sql"]
 
 
 def test_assemble_min_score_drops_low_and_unreranked_chunks(conn):

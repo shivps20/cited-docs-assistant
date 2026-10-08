@@ -88,6 +88,9 @@ class Retriever:
             context = assemble(self.conn, candidates,
                                min_score=req.min_context_score if reranked else None)
             stage["units"] = [[u.section_id, u.kind, u.tokens] for u in context]
+            same = {u.section_id: [s.section_id for s in u.same_text] for u in context if u.same_text}
+            if same:
+                stage["same_text"] = same          # near-duplicates cited with the unit, not sent to the LLM
 
         top_rerank = candidates[0].rerank_score if candidates else None
         trace.set(release_filter=release_label, top_rerank_score=top_rerank)

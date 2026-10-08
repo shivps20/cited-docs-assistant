@@ -6,7 +6,8 @@ For each ranked chunk, best first:
   section widen the same window instead of adding a new unit.
 Stops at MAX_UNITS units / MAX_TOKENS tokens. Units whose text is the same apart from small edits
 (the MSSQL and Oracle guides share most sections, often with a word or two changed) are kept once:
-the higher-ranked copy wins.
+the higher-ranked copy wins, and the copies from other documents are recorded on it (`same_text`)
+so the answer can cite them too.
 """
 
 import sqlite3
@@ -20,6 +21,33 @@ MAX_TOKENS = 3000
 SECTION_MAX_TOKENS = 800
 NEAR_DUPLICATE_RATIO = 0.95  # word-level similarity; MSSQL/Oracle copies with cosmetic edits are 0.96-0.99,
                              # sections that differ in content are 0.92 or lower
+
+
+def page_text(page_start: int, page_end: int) -> str:
+    """Page reference, e.g. 'p. 9' or 'pp. 9-10'."""
+    return f"p. {page_start}" if page_start == page_end else f"pp. {page_start}-{page_end}"
+
+
+@dataclass
+class SameText:
+    """A near-identical copy of a context unit in another document: not sent to the LLM, cited with the unit."""
+    doc_id: str
+    title: str
+    section_id: str
+    section_number: str
+    page_start: int
+    page_end: int
+    release: str = ""
+
+    @property
+    def pages(self) -> str:
+        """Page reference, e.g. 'p. 9' or 'pp. 9-10'."""
+        return page_text(self.page_start, self.page_end)
+
+    @property
+    def citation(self) -> str:
+        """Short citation, e.g. 'MSSQL Guide, Section 3.4, p. 8'."""
+        return f"{self.title}, Section {self.section_number}, {self.pages}"
 
 
 @dataclass
@@ -41,11 +69,12 @@ class ContextUnit:
     window: tuple[int, int] | None = None   # chunk_index range for windows
     release: str = ""                       # release label from the manifest, e.g. 'R2015x+'
     external_ok: bool = False               # may this text be sent to an external LLM
+    same_text: list[SameText] = field(default_factory=list)   # near-identical copies in other documents
 
     @property
     def pages(self) -> str:
         """Page reference, e.g. 'p. 9' or 'pp. 9-10'."""
-        return f"p. {self.page_start}" if self.page_start == self.page_end else f"pp. {self.page_start}-{self.page_end}"
+        return page_text(self.page_start, self.page_end)
 
     @property
     def heading(self) -> str:
@@ -73,6 +102,15 @@ def near_duplicate(a: str, b: str, ratio: float = NEAR_DUPLICATE_RATIO) -> bool:
     wa, wb = a.split(), b.split()
     matcher = SequenceMatcher(None, wa, wb, autojunk=False)
     return matcher.real_quick_ratio() >= ratio and matcher.quick_ratio() >= ratio and matcher.ratio() >= ratio
+
+
+def _add_same_text(unit: ContextUnit, c: Candidate, page_start: int, page_end: int) -> None:
+    """Record candidate `c`'s section as a copy of `unit`, once per other document."""
+    if c.doc_id == unit.doc_id or any(s.doc_id == c.doc_id for s in unit.same_text):
+        return
+    unit.same_text.append(SameText(doc_id=c.doc_id, title=c.title, section_id=c.section_id,
+                                   section_number=c.section_number, page_start=page_start, page_end=page_end,
+                                   release=c.payload.get("release_label", "")))
 
 
 def assemble(conn: sqlite3.Connection, ranked: list[Candidate], *, max_units: int = MAX_UNITS,
@@ -103,8 +141,6 @@ def assemble(conn: sqlite3.Connection, ranked: list[Candidate], *, max_units: in
                 existing.chunk_ids.append(c.chunk_id)
             continue
 
-        if len(units) >= max_units:
-            continue
         if section["token_count"] <= section_max_tokens:
             kind, window = "section", None
             text, tokens = section["text"], section["token_count"]
@@ -112,7 +148,12 @@ def assemble(conn: sqlite3.Connection, ranked: list[Candidate], *, max_units: in
         else:
             kind, window = "window", (c.chunk_index - 1, c.chunk_index + 1)
             text, tokens, p_start, p_end = _window(conn, c.section_id, *window)
-        if used + tokens > max_tokens or any(near_duplicate(u.text, text) for u in units):
+        # Checked before the limits: a copy ranked below the cut-off is still cited with its twin.
+        twin = next((u for u in units if near_duplicate(u.text, text)), None)
+        if twin is not None:
+            _add_same_text(twin, c, p_start, p_end)
+            continue
+        if len(units) >= max_units or used + tokens > max_tokens:
             continue
         units.append(ContextUnit(
             doc_id=c.doc_id, title=c.title, section_id=c.section_id, section_number=c.section_number,

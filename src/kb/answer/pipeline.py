@@ -48,6 +48,8 @@ class Source:
     page_start: int
     page_end: int
     line: str                   # formatted source line
+    same_text: list[dict] = field(default_factory=list)   # near-identical copies in other documents:
+                                                          # doc_id, title, section, page_start, page_end, release
 
 
 @dataclass
@@ -87,7 +89,10 @@ def _source(n: int, unit: ContextUnit) -> Source:
     """Source entry for context unit `unit`, cited as [n]."""
     return Source(n=n, doc_id=unit.doc_id, title=unit.title, release=unit.release, section=unit.section_number,
                   heading=unit.heading, page_start=unit.page_start, page_end=unit.page_end,
-                  line=source_line(n, unit))
+                  line=source_line(n, unit),
+                  same_text=[{"doc_id": s.doc_id, "title": s.title, "section": s.section_number,
+                              "page_start": s.page_start, "page_end": s.page_end, "release": s.release}
+                             for s in unit.same_text])
 
 
 class Answerer:
