@@ -181,7 +181,7 @@ uv run kb search "..." --rerank-top 0 --min-score 0.3                           
 | `--no-compare` | | Answer comparison questions with one search instead of one search per side |
 | `--no-refusal-retry` | `KB_REFUSAL_RETRY` (on) | No second attempt with the best-matching sources when the model finds no answer |
 
-After the answer it prints the sources, any notes (removed citations, provider choice), the status (`answered`, or `not found` by the gate or by the LLM), timings and the trace ID.
+After the answer it prints the sources, any notes (removed citations, provider choice, a comparison answered with one search, an answer found on the second attempt), the status (`answered`, or `not found` by the gate or by the LLM), timings and the trace ID.
 
 ```bash
 uv run kb ask "How do I enable single sign-on?"
