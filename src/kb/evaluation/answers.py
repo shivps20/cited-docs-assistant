@@ -72,6 +72,8 @@ class AnswerResult:
     raw_output: str = ""
     sources: list[str] = field(default_factory=list)
     trace_id: str = ""
+    route: str = "answer"                 # answer | compare (searched once per side)
+    sides: list[str] = field(default_factory=list)
 
 
 def normalise(text: str) -> str:
@@ -137,6 +139,7 @@ def score_answer(q: dict, answer: Answer, verdict: Verdict | None, total_ms: flo
         judge_error=verdict.error if verdict else None,
         answer=answer.text, raw_output=answer.generation.text if answer.generation else "",
         sources=[s.line for s in answer.sources], trace_id=answer.trace_id,
+        route=answer.route, sides=list(answer.sides),
     )
 
 

@@ -45,6 +45,7 @@ uv run kb eval                                        # all six configurations (
 | `--types LIST` | Only these question types: `lookup`, `howto`, `compare`, `unanswerable` |
 | `--no-judge` | Skip the LLM faithfulness judge (about a third faster) |
 | `--provider` | `auto`, `ollama` or `openai` for the answers (the judge always uses Ollama) |
+| `--no-compare` | Answer comparisons with one search (baseline for the comparison path) |
 | `--details` | Also print missing `must_include` strings and unsupported claims per question |
 
 Runs every golden question through the full pipeline (full access, no release filter) and scores:
@@ -53,7 +54,7 @@ Runs every golden question through the full pipeline (full access, no release fi
 - **Content:** share of `must_include` strings, article numbers and URLs from the expected answer that appear in the answer.
 - **Citations:** precision (cited sources on a golden document and pages) and document recall (golden documents cited, which matters for comparisons); whether the context held a golden source at all, to separate retrieval from generation failures.
 - **Faithfulness (LLM judge):** qwen splits the answer into claims and quotes the evidence for each; a claim counts as supported only if its quote occurs word for word in the context. Same model judging its own answers: read flagged claims, don't treat 1.0 as proof.
-- **Style flags:** no `[n]` markers (M), a not-found sentence removed (N), talk about "the sources" (T).
+- **Style flags:** answered on the comparison path (C), no `[n]` markers (M), a not-found sentence removed (N), talk about "the sources" (T).
 
 One line per question as it runs, then a summary; the full report (answers, raw model output, unsupported claims, settings and a prompt hash for comparing runs) goes to `data/eval/answers-<timestamp>.json`. With the judge, expect ~30–40 s per question.
 

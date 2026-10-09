@@ -176,6 +176,7 @@ uv run kb search "..." --rerank-top 0 --min-score 0.3                           
 | `--rerank-top N` | `KB_RERANK_TOP` (20) | Rerank only the first N candidates; `0` = all |
 | `--show-context` | | Print the context sent to the LLM before the answer |
 | `--no-stream` | | Print the answer only when it is complete |
+| `--no-compare` | | Answer comparison questions with one search instead of one search per side |
 
 After the answer it prints the sources, any notes (removed citations, provider choice), the status (`answered`, or `not found` by the gate or by the LLM), timings and the trace ID.
 
@@ -185,6 +186,7 @@ uv run kb ask "Which port does the application server use?" --show-context      
 uv run kb ask "Which tool captures traffic for a performance analysis?" --groups internal   # restricted document
 uv run kb ask "Which SQL Server version is supported?" --release R2026x
 uv run kb ask "How do I configure NGINX as a reverse proxy?"                   # expect "not found"
+uv run kb ask "How does the database setup differ between MSSQL and Oracle?"   # comparison: one search per side
 uv run kb ask "..." --provider openai                                        # needs OPENAI_API_KEY + OPENAI_MODEL
 ```
 

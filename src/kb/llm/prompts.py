@@ -57,22 +57,35 @@ def release_text(release: str) -> str:
 
 
 def format_context(context: Sequence[ContextUnit]) -> str:
-    """The context units as numbered sources: '[n] title (applies to ...) | Section ... | pages' + text."""
+    """The context units as numbered sources: '[n] title (applies to ...) | Section ... | pages' + text.
+    Comparison units also say which side they were found for ('| found for: Oracle')."""
     blocks = []
     for n, u in enumerate(context, start=1):
         label = f"[{n}] {u.title} (applies to {release_text(u.release)}) | Section {u.heading_path} | {u.pages}"
+        if u.side:
+            label += f" | found for: {u.side}"
         blocks.append(f"{label}\n{u.text.strip()}")
     return "\n\n".join(blocks)
 
 
-def build_messages(question: str, context: Sequence[ContextUnit]) -> list[dict]:
-    """System and user messages for the LLM: the rules, the numbered sources, then the question."""
-    user = (f"Sources:\n\n{format_context(context)}\n\n"
-            f"Question: {question}\n\n"
-            # The last instruction weighs most with a small model: phrased answer-first, because
-            # "if they do not contain the answer, reply ..." made it refuse broad but answerable questions.
-            f"Answer the question from the sources above, citing them as [n]. Only if none of the "
-            f"sources addresses the question, reply exactly: {NOT_FOUND}")
+def comparison_instruction(sides: Sequence[str]) -> str:
+    """The closing instruction for a comparison: cover each side from its own sources, then compare."""
+    items = "; ".join(f"({chr(65 + i)}) {s}" for i, s in enumerate(sides))
+    return (f"The question compares: {items}. Describe each item from the sources found for it, citing "
+            f"them as [n], then state the differences (or that there are none) explicitly. If the sources "
+            f"disagree, say so. If no source covers one of the items, say that for that item and still "
+            f"answer for the others. Only if no source addresses any item, reply exactly: {NOT_FOUND}")
+
+
+def build_messages(question: str, context: Sequence[ContextUnit], sides: Sequence[str] = ()) -> list[dict]:
+    """System and user messages for the LLM: the rules, the numbered sources, then the question.
+    sides: for a comparison, the items compared (changes the closing instruction)."""
+    closing = comparison_instruction(sides) if sides else (
+        # The last instruction weighs most with a small model: phrased answer-first, because
+        # "if they do not contain the answer, reply ..." made it refuse broad but answerable questions.
+        f"Answer the question from the sources above, citing them as [n]. Only if none of the "
+        f"sources addresses the question, reply exactly: {NOT_FOUND}")
+    user = f"Sources:\n\n{format_context(context)}\n\nQuestion: {question}\n\n{closing}"
     return [{"role": "system", "content": system_prompt()}, {"role": "user", "content": user}]
 
 

@@ -198,7 +198,7 @@ def test_answer_cites_sources_and_traces_everything(conn):
     assert json.loads(trace["sources"])[0]["section"] == "2.2.3"
     stages = [r["stage"] for r in conn.execute("SELECT stage FROM trace_stages WHERE trace_id = ? ORDER BY seq",
                                                (answer.trace_id,))]
-    assert stages == ["search", "gate", "generate", "cite"]
+    assert stages == ["route", "search", "gate", "generate", "cite"]
 
 
 def test_condensed_follow_up_is_traced_with_both_questions(conn):

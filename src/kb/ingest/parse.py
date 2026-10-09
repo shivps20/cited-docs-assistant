@@ -29,6 +29,8 @@ from kb.ingest.manifest import Document
 PARSER_VERSION = 1
 
 HEADING_LABELS = {DocItemLabel.TITLE, DocItemLabel.SECTION_HEADER}
+STALL_SECONDS = 120          # see ParseStats.stalled
+STALL_CPU_SHARE = 0.1
 
 log = logging.getLogger(__name__)
 
@@ -46,11 +48,18 @@ class ParseStats:
     pictures: int
     empty_pages: int     # pages with no body text or table (e.g. screenshot-only pages)
     furniture: int       # page headers/footers Docling separated from the body
+    cpu_seconds: float = 0.0   # CPU time of the parse (all threads); far below `seconds` = the machine slept
 
     @property
     def seconds_per_page(self) -> float:
         """Parse time per page (0 for a document without pages)."""
         return self.seconds / self.pages if self.pages else 0.0
+
+    @property
+    def stalled(self) -> bool:
+        """Took over 2 minutes while using under a tenth of that in CPU time: the machine was asleep or
+        heavily throttled, not busy parsing (a normal parse uses 2-6 s of CPU per second)."""
+        return not self.cached and self.seconds > STALL_SECONDS and self.cpu_seconds < STALL_CPU_SHARE * self.seconds
 
 
 def file_sha256(path: Path) -> str:
@@ -128,16 +137,17 @@ def parse_document(doc: Document, converter, *, force: bool = False) -> tuple[Do
         dl = DoclingDocument.load_from_json(target)
         return dl, ParseStats(doc.doc_id, seconds=0.0, cached=True, **document_stats(dl)), file_hash
 
-    start = time.perf_counter()
+    start, cpu_start = time.perf_counter(), time.process_time()
     result = converter.convert(doc.path)
-    seconds = time.perf_counter() - start
+    seconds, cpu_seconds = time.perf_counter() - start, time.process_time() - cpu_start
     dl = result.document
 
     target.parent.mkdir(parents=True, exist_ok=True)
     for stale in target.parent.glob(f"{doc.doc_id}.*.json"):
         stale.unlink()
     dl.save_as_json(target, image_mode=ImageRefMode.PLACEHOLDER)
-    return dl, ParseStats(doc.doc_id, seconds=seconds, cached=False, **document_stats(dl)), file_hash
+    return dl, ParseStats(doc.doc_id, seconds=seconds, cached=False, cpu_seconds=cpu_seconds,
+                          **document_stats(dl)), file_hash
 
 
 STAT_COLUMNS = ("text_items", "headings", "tables", "pictures", "empty_pages", "furniture")

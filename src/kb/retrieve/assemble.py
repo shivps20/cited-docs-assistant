@@ -8,8 +8,17 @@ Stops at MAX_UNITS units / MAX_TOKENS tokens. Units whose text is the same apart
 (the MSSQL and Oracle guides share most sections, often with a word or two changed) are kept once:
 the higher-ranked copy wins, and the copies from other documents are recorded on it (`same_text`)
 so the answer can cite them too.
+
+Executive summaries are front matter: they restate the whole document in general terms and, ranked
+high on broad wording, took context slots from content sections (TD-14). Their rerank score is
+multiplied by FRONT_MATTER_FACTOR for the ordering here. Numbered introductions are not demoted:
+they are golden sources for some questions (e.g. which services a guide covers).
+
+Comparisons search once per side; `merge_contexts` combines the sides' units, reserving slots for
+each side so one side cannot fill the whole context.
 """
 
+import re
 import sqlite3
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
@@ -21,6 +30,10 @@ MAX_TOKENS = 3000
 SECTION_MAX_TOKENS = 800
 NEAR_DUPLICATE_RATIO = 0.95  # word-level similarity; MSSQL/Oracle copies with cosmetic edits are 0.96-0.99,
                              # sections that differ in content are 0.92 or lower
+FRONT_MATTER_FACTOR = 0.8    # executive summaries rank as if their rerank score were 20% lower
+_FRONT_MATTER = re.compile(r"^(?:0\s+)?executive\s+summary\b", re.IGNORECASE)
+UNITS_PER_SIDE = 3           # comparisons: context slots reserved for each side
+COMPARE_MAX_TOKENS = 4000    # comparisons: total context budget (two or three sides)
 
 
 def page_text(page_start: int, page_end: int) -> str:
@@ -70,6 +83,7 @@ class ContextUnit:
     release: str = ""                       # release label from the manifest, e.g. 'R2015x+'
     external_ok: bool = False               # may this text be sent to an external LLM
     same_text: list[SameText] = field(default_factory=list)   # near-identical copies in other documents
+    side: str = ""                          # comparisons: the side this unit was found for
 
     @property
     def pages(self) -> str:
@@ -113,12 +127,28 @@ def _add_same_text(unit: ContextUnit, c: Candidate, page_start: int, page_end: i
                                    release=c.payload.get("release_label", "")))
 
 
+def is_front_matter(c: Candidate) -> bool:
+    """Is the candidate from an executive summary (unnumbered front matter)?"""
+    return bool(_FRONT_MATTER.match(c.header.rsplit(" > ", 1)[-1].strip()))
+
+
+def demote_front_matter(ranked: list[Candidate], factor: float = FRONT_MATTER_FACTOR) -> list[Candidate]:
+    """Reorder the reranked candidates with executive summaries' scores multiplied by `factor`.
+
+    Only reranked candidates move (their scores are comparable); the unreranked tail keeps its place.
+    """
+    head = [c for c in ranked if c.rerank_score is not None]
+    tail = [c for c in ranked if c.rerank_score is None]
+    head.sort(key=lambda c: c.rerank_score * (factor if is_front_matter(c) else 1.0), reverse=True)
+    return head + tail
+
+
 def assemble(conn: sqlite3.Connection, ranked: list[Candidate], *, max_units: int = MAX_UNITS,
              max_tokens: int = MAX_TOKENS, section_max_tokens: int = SECTION_MAX_TOKENS,
              min_score: float | None = None) -> list[ContextUnit]:
     """min_score (reranker scale): skip chunks below it, and chunks that were not reranked."""
     units: list[ContextUnit] = []
-    for c in ranked:
+    for c in demote_front_matter(ranked):
         if min_score is not None and (c.rerank_score is None or c.rerank_score < min_score):
             continue
         section = conn.execute("SELECT heading_path, text, token_count, page_start, page_end FROM sections "
@@ -162,3 +192,36 @@ def assemble(conn: sqlite3.Connection, ranked: list[Candidate], *, max_units: in
             release=c.payload.get("release_label", ""), external_ok=bool(c.payload.get("external_ok", False)),
         ))
     return units
+
+
+def merge_contexts(sides: list[tuple[str, list[ContextUnit]]], *, per_side: int = UNITS_PER_SIDE,
+                   max_tokens: int = COMPARE_MAX_TOKENS) -> list[ContextUnit]:
+    """One context from each side's units: taken in turns (best of each side first), at most `per_side`
+    units per side and `max_tokens` in total.
+
+    A section found for several sides is used once, labelled with the first side that found it; a
+    near-identical section is recorded as a copy (`same_text`) of the unit already chosen.
+    """
+    merged: list[ContextUnit] = []
+    taken = {label: 0 for label, _ in sides}
+    for rank in range(max((len(units) for _, units in sides), default=0)):
+        for label, units in sides:
+            if rank >= len(units) or taken[label] >= per_side:
+                continue
+            unit = units[rank]
+            if any(u.section_id == unit.section_id for u in merged):
+                continue
+            twin = next((u for u in merged if near_duplicate(u.text, unit.text)), None)
+            if twin is not None:
+                copies = [SameText(unit.doc_id, unit.title, unit.section_id, unit.section_number,
+                                   unit.page_start, unit.page_end, unit.release), *unit.same_text]
+                for copy in copies:
+                    if copy.doc_id != twin.doc_id and all(s.doc_id != copy.doc_id for s in twin.same_text):
+                        twin.same_text.append(copy)
+                continue
+            if sum(u.tokens for u in merged) + unit.tokens > max_tokens:
+                continue
+            unit.side = label
+            merged.append(unit)
+            taken[label] += 1
+    return merged

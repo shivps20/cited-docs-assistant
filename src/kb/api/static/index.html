@@ -239,6 +239,7 @@ function finishCard(card, f, contextUnits) {
   const bits = [];
   if (f.standalone_query) bits.push(`Interpreted as: <b>${esc(f.standalone_query)}</b>`);
   if (f.release) bits.push(`Release: <b>${esc(f.release)}</b>${f.release_reason === "sticky" ? " (kept from the conversation)" : ""}`);
+  if ((f.sides || []).length) bits.push(`Compared: <b>${f.sides.map(esc).join("</b> vs <b>")}</b> (one search each)`);
   if (bits.length) { interp.innerHTML = bits.join(" · "); interp.hidden = false; }
   card.querySelector(".answer").innerHTML = renderMarkdown(f.answer);
   const notices = (f.notices || []).map((n) => `<div class="notice">${esc(n)}</div>`).join("");

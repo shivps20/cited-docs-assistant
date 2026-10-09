@@ -8,7 +8,7 @@ How a question is answered, from the document manifest to a cited answer. For co
 Ingestion (offline)                         Query (per request)
 -------------------                         -------------------
 documents + manifest                        question
-  -> Docling parse                            -> condense follow-up, route
+  -> Docling parse                            -> condense follow-up, route (comparison: one search per side)
   -> structure-aware chunks                   -> hybrid search in Qdrant (dense + sparse, RRF)
   -> metadata from manifest                   -> filters: access groups, release, latest revision
   -> bge-m3 dense + sparse                    -> rerank -> confidence gate -> assemble context
@@ -27,7 +27,7 @@ uv run kb search "..." --mode dense --no-rerank --context        # compare modes
 
 Query embedding and reranking run on the CPU (the GPU stays free for the LLM). Every search is traced in the `traces` / `trace_stages` tables.
 
-Search retrieves 30 candidates (dense + sparse, fused), reranks the first `KB_RERANK_TOP` of them with the cross-encoder, then assembles up to 6 context units (3,000 tokens) for the LLM; near-identical sections (the same section in two variants of a guide) are sent once, and the copy is named in the source line ("· same text: …") so both documents are cited.
+Search retrieves 30 candidates (dense + sparse, fused), reranks the first `KB_RERANK_TOP` of them with the cross-encoder, then assembles up to 6 context units (3,000 tokens) for the LLM; near-identical sections (the same section in two variants of a guide) are sent once, and the copy is named in the source line ("· same text: …") so both documents are cited. Executive summaries rank as if their rerank score were 20% lower, so broad front matter does not take slots from content sections (numbered introductions are not demoted: they answer some questions).
 
 ### Tuning flags
 
@@ -53,4 +53,13 @@ uv run kb ask "..." --groups internal --release R2025x --show-context
 3. **Provider:** Ollama (`LLM_MODEL`) by default. With `OPENAI_API_KEY` and `OPENAI_MODEL` set, `KB_LLM_PROVIDER=auto` uses OpenAI only when **every** source has `external_ok = true`; otherwise it answers locally and says why. If OpenAI fails, it falls back to Ollama.
 4. **Citations:** `[n]` markers that do not match a source are removed; the **Sources** list under the answer is built from the cited numbers, never written by the LLM.
 
-The answer streams as it is generated (~25 tokens/s with qwen2.5 7B on the 6 GB GPU; the first question after a pause also loads the model, 5–25 s). The whole run (retrieval, gate, generation, citations) is one trace with `route = 'answer'`.
+**Comparisons** ("How does X differ between A and B?", "A versus B", two releases, "Should …, X or Y?") take a different retrieval step, because one search tends to fill the context with the side that matches the wording best:
+
+1. **Route:** word rules mark the question as a comparison (no LLM call). "different" alone does not count ("What are the different components …?" asks for a list).
+2. **Split:** the local LLM turns it into one search question per side (2–3 sides, JSON), e.g. "certificates for SAML on Cloud" and "certificates for HTTPS on premises" (~2–4 s). A reply that does not really split the question falls back to one search.
+3. **Search per side:** each side is searched with the user's groups; when the question names two releases, each side is filtered to its own release.
+4. **Merge:** up to 3 sections per side, taken in turns, within 4,000 tokens; each source is labelled with the side it was found for, and the prompt asks for each side, then the differences, and to say when the sources disagree.
+
+The gate, provider choice and citation checks are the same; the trace has `route = 'compare'` with a `decompose` stage and one set of search stages per side. `--no-compare` answers comparisons with one search (to compare the two paths).
+
+The answer streams as it is generated (~25 tokens/s with qwen2.5 7B on the 6 GB GPU; the first question after a pause also loads the model, 5–25 s). The whole run (retrieval, gate, generation, citations) is one trace with `route = 'answer'` (or `'compare'`).

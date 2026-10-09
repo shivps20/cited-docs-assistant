@@ -112,11 +112,12 @@ src/kb/
   store/           embed (bge-m3 dense + sparse) · vectorstore (Qdrant collection)
   retrieve/        search (filters, hybrid) · rerank · assemble · pipeline · gate · release
   llm/             providers (Ollama, OpenAI) · prompts (prompt, citations) · condense (follow-ups) · judge
+  agent/           route (comparison?) · tools (search_kb, get_section with access checks) · compare (one search per side)
   answer/          pipeline: retrieve -> gate -> LLM -> citations, in one trace
   evaluation/      coverage · retrieval (kb eval) · answers (kb eval-answers)
   api/             app (FastAPI) · chat (SSE turn) · services · health · users · sessions · static/ (chat UI)
   cli/             main (entry point) · ingest · search · evaluation · serve
-tests/             mirrors src/kb (core, ingest, retrieve, answer, evaluation, api)
+tests/             mirrors src/kb (core, ingest, retrieve, agent, answer, evaluation, api)
 data/, models/     local runtime data (documents, parse cache, kb.db, reports) and models: git-ignored
 ```
 

@@ -1,14 +1,20 @@
-"""Answer pipeline: retrieve -> gate -> prompt -> LLM -> check citations, in one trace.
+"""Answer pipeline: route -> retrieve -> gate -> prompt -> LLM -> check citations, in one trace.
 
     answerer = Answerer(conn, retriever, build_providers(settings), not_found_score=0.1)
     answer = answerer.answer(SearchRequest("How do I ...?"), on_token=print)
     print(answer.formatted())
+
+Comparison questions (kb.agent.route) are split into sides by the local LLM and searched once per
+side (kb.agent.compare), so every side reaches the context; everything after retrieval is shared.
 """
 
 import sqlite3
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
+from kb.agent.compare import Decomposition, decompose, retrieve_sides
+from kb.agent.route import ANSWER, COMPARE, Route, route_question
+from kb.agent.tools import KBTools
 from kb.core.tracing import Tracer
 from kb.llm.prompts import (
     NOT_FOUND,
@@ -69,6 +75,8 @@ class Answer:
     invalid_citations: list[int] = field(default_factory=list)
     notices: list[str] = field(default_factory=list)
     references: list[str] = field(default_factory=list)  # article numbers / URLs added from cited sources
+    route: str = ANSWER                     # answer | compare (the path that produced the answer)
+    sides: list[str] = field(default_factory=list)       # comparisons: the items compared
 
     @property
     def refused_by(self) -> str | None:
@@ -99,17 +107,22 @@ class Answerer:
     """Answers questions: retrieval, confidence gate, LLM generation and citation checking, in one trace."""
 
     def __init__(self, conn: sqlite3.Connection, retriever: Retriever, providers: Mapping[str, LLMProvider], *,
-                 not_found_score: float = 0.1, provider: str = "auto"):
+                 not_found_score: float = 0.1, provider: str = "auto", compare: bool = True,
+                 planner: LLMProvider | None = None):
         """Keep the retriever and the available LLM providers (by name).
 
         not_found_score: gate threshold on the top rerank score.
         provider: default provider choice ('auto', 'ollama' or 'openai').
+        compare: route comparison questions to the comparison path (False: one search for every question).
+        planner: local model that splits comparisons into sides (default: the Ollama answer provider).
         """
         self.conn = conn
         self.retriever = retriever
         self.providers = providers
         self.not_found_score = not_found_score
         self.provider = provider
+        self.compare = compare
+        self.planner = planner if planner is not None else providers.get(OLLAMA)
 
     def answer(self, req: SearchRequest, *, provider: str | None = None,
                on_token: Callable[[str], None] | None = None,
@@ -122,12 +135,18 @@ class Answerer:
         the trace started, recorded first (e.g. condensing).
         """
         with Tracer(self.conn, asked or req.query, user_id=req.user_id, session_id=req.session_id) as trace:
-            trace.set(route="answer")
             if asked and asked != req.query:
                 trace.set(standalone_query=req.query)
             for name, ms, data in pre_stages:
                 trace.add_stage(name, ms, **data)
-            result = self.retriever.retrieve(req, trace)
+            route, plan = self._route(req.query, trace)
+            if plan is not None and plan.sides:
+                result = retrieve_sides(KBTools(self.conn, self.retriever, req, trace), req.query, plan.sides)
+                trace.set(top_rerank_score=result.candidates[0].rerank_score if result.candidates else None)
+            else:
+                result = self.retriever.retrieve(req, trace)
+            sides = [s.label for s in plan.sides] if plan is not None else []
+            trace.set(route=COMPARE if sides else ANSWER)
 
             with trace.stage("gate", threshold=self.not_found_score) as stage:
                 decision = gate(result, self.not_found_score)
@@ -136,7 +155,10 @@ class Answerer:
 
             answer = Answer(question=req.query, text=NOT_FOUND, status=NOT_FOUND_STATUS, gate=decision,
                             sources=[], context=result.context, candidates=result.candidates,
-                            trace_id=trace.trace_id, timings_ms={})
+                            trace_id=trace.trace_id, timings_ms={}, route=COMPARE if sides else ANSWER,
+                            sides=sides)
+            if route.kind == COMPARE and not sides:
+                answer.notices.append(f"Comparison answered with one search ({plan.reason if plan else route.reason}).")
             if on_context:
                 on_context(result.context)
             if decision.passed:
@@ -144,6 +166,20 @@ class Answerer:
             trace.set(answer=answer.text, sources=[s.__dict__ for s in answer.sources])
         answer.timings_ms = stage_timings(trace)
         return answer
+
+    def _route(self, question: str, trace: Tracer) -> tuple[Route, Decomposition | None]:
+        """Route the question; for a comparison, split it into sides (None when not a comparison)."""
+        with trace.stage("route") as stage:
+            route = route_question(question)
+            if route.kind == COMPARE and not self.compare:
+                route = Route(ANSWER, "comparison path switched off")
+            stage.update(route=route.kind, reason=route.reason)
+        if route.kind != COMPARE:
+            return route, None
+        plan = decompose(self.planner, question)
+        trace.add_stage("decompose", plan.seconds * 1000, reason=plan.reason,
+                        sides=[{"label": s.label, "query": s.query} for s in plan.sides], raw_output=plan.raw)
+        return route, plan
 
     def _generate(self, answer: Answer, trace: Tracer, requested: str,
                   on_token: Callable[[str], None] | None) -> None:
@@ -153,7 +189,7 @@ class Answerer:
         name, notice = select_provider(requested, answer.context, list(self.providers))
         if notice:
             answer.notices.append(notice)
-        messages = build_messages(answer.question, answer.context)
+        messages = build_messages(answer.question, answer.context, answer.sides)
 
         with trace.stage("generate", provider=name, model=self.providers[name].model,
                          prompt_chars=sum(len(m["content"]) for m in messages)) as stage:

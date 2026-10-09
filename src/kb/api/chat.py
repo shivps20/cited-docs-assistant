@@ -64,6 +64,7 @@ def final_payload(answer: Answer, *, standalone: str | None, condense_reason: st
                     for s in answer.sources],
         "references": answer.references, "notices": answer.notices, "invalid_citations": answer.invalid_citations,
         "standalone_query": standalone, "condense_reason": condense_reason,
+        "route": answer.route, "sides": answer.sides,
         "release": release, "release_reason": release_reason,
         "provider": g.provider if g else None, "model": g.model if g else None,
         "tokens_per_s": round(g.tokens_per_s, 1) if g and g.tokens_per_s else None,
