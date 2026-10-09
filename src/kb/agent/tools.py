@@ -17,7 +17,6 @@ from kb.retrieve.assemble import ContextUnit, page_text, window_text
 from kb.retrieve.pipeline import Retriever, SearchRequest, SearchResult
 from kb.retrieve.search import PUBLIC_GROUP
 
-SNIPPET_CHARS = 300      # text per search result in the compact listing
 OUTLINE_MAX_ENTRIES = 60  # sections listed per document outline (levels 1-3 first)
 OUTLINE_MAX_LEVEL = 3
 READ_MAX_TOKENS = 600     # a longer section is read as its first chunks up to about this size
@@ -129,9 +128,3 @@ class KBTools:
         if row is None or not set(json.loads(row["allowed_groups"] or "[]")) & set(self.groups):
             return None
         return row
-
-
-def listing(units: list[ContextUnit]) -> list[dict]:
-    """Compact view of context units (id, citation, score, start of the text) for logs and, later, an LLM."""
-    return [{"section_id": u.section_id, "citation": u.citation, "score": round(u.score, 4),
-             "snippet": u.text[:SNIPPET_CHARS]} for u in units]
