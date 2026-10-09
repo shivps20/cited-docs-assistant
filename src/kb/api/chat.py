@@ -70,6 +70,7 @@ def final_payload(answer: Answer, *, standalone: str | None, condense_reason: st
         "route": answer.route, "sides": answer.sides,
         "release": release, "release_reason": release_reason,
         "provider": g.provider if g else None, "model": g.model if g else None,
+        "model_profile": answer.model_profile or None,
         "tokens_per_s": round(g.tokens_per_s, 1) if g and g.tokens_per_s else None,
         "timings_ms": answer.timings_ms, "trace_id": answer.trace_id, "message_id": message_id,
     }

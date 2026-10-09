@@ -20,6 +20,7 @@ snapshots/
 config/manifest.csv
 config/users.yaml
 config/domain.yaml
+config/models.yaml
 eval/golden.json
 
 # Local notes and working files (not versioned)

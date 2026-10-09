@@ -7,7 +7,7 @@ from qdrant_client import QdrantClient
 
 from kb.core.config import get_settings
 from kb.core.tracing import Tracer
-from kb.retrieve.assemble import ContextUnit, assemble
+from kb.retrieve.assemble import MAX_TOKENS, MAX_UNITS, ContextUnit, assemble
 from kb.retrieve.rerank import Reranker, rerank
 from kb.retrieve.search import Candidate, build_filter, search
 from kb.store.embed import Embedder
@@ -25,6 +25,8 @@ class SearchRequest:
     candidates: int = 30
     rerank_top: int | None = field(default_factory=lambda: get_settings().rerank_top)  # None = all
     min_context_score: float | None = None   # drop context chunks scoring below this (needs rerank)
+    max_context_units: int = MAX_UNITS       # context size, from the answer model's budget (Phase 6)
+    max_context_tokens: int = MAX_TOKENS
     user_id: str | None = None
     session_id: str | None = None
 
@@ -90,7 +92,8 @@ class Retriever:
                                 if c.rerank_score is not None]
 
         with trace.stage("assemble", min_score=req.min_context_score, **tag) as stage:
-            context = assemble(self.conn, candidates,
+            context = assemble(self.conn, candidates, max_units=req.max_context_units,
+                               max_tokens=req.max_context_tokens,
                                min_score=req.min_context_score if reranked else None)
             stage["units"] = [[u.section_id, u.kind, u.tokens] for u in context]
             same = {u.section_id: [s.section_id for s in u.same_text] for u in context if u.same_text}

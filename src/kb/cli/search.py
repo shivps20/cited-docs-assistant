@@ -74,8 +74,10 @@ def ask_command(args) -> int:
     from kb.answer.pipeline import Answerer
     from kb.core.db import connect
     from kb.ingest.manifest import parse_release
+    from kb.llm.catalogue import CatalogueError
     from kb.llm.prompts import REFERENCES_HEADING
-    from kb.llm.providers import LLMError, build_providers
+    from kb.llm.providers import LLMError
+    from kb.llm.registry import ModelRegistry
     from kb.retrieve.pipeline import Retriever, SearchRequest
     from kb.retrieve.rerank import BgeReranker
     from kb.store.embed import BgeM3Embedder
@@ -95,10 +97,16 @@ def ask_command(args) -> int:
 
     conn = connect()
     retriever = Retriever(conn, get_client(), s.qdrant_collection, embedder, reranker)
-    answerer = Answerer(conn, retriever, build_providers(s), not_found_score=s.not_found_score,
-                        provider=args.provider or s.llm_provider, compare=not args.no_compare,
+    try:
+        models = ModelRegistry.load()
+        if args.model:
+            models.resolve(args.model)              # unknown name → message with the configured models
+    except (CatalogueError, LLMError) as e:
+        print(e)
+        return 1
+    answerer = Answerer(conn, retriever, models, not_found_score=s.not_found_score,
+                        provider=args.model or s.llm_provider, compare=not args.no_compare,
                         refusal_retry=s.refusal_retry and not args.no_refusal_retry)
-    # compare_read=s.compare_read or args.compare_read  — read step disabled (TO-5.10)
     rerank_top = s.rerank_top if args.rerank_top is None else (args.rerank_top or None)
     request = SearchRequest(args.query, groups=_parse_groups(args.groups), release=release, mode=args.mode,
                             rerank=not args.no_rerank, rerank_top=rerank_top, user_id="cli")

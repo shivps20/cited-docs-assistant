@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     # Organisation-specific text rules and the golden question set (both local, git-ignored)
     domain_path: Path = Field(Path("config/domain.yaml"), validation_alias="KB_DOMAIN_PATH")
     golden_path: Path = Field(Path("eval/golden.json"), validation_alias="KB_GOLDEN_PATH")
+    # Language models and which job each one does (Phase 6; local, git-ignored). Without the file:
+    # the local Ollama model, plus OpenAI when OPENAI_* is set (kb.llm.catalogue.default_catalogue).
+    models_path: Path = Field(Path("config/models.yaml"), validation_alias="KB_MODELS_PATH")
 
     # Chat API (kb serve). Loopback only by default: users are not authenticated.
     api_host: str = Field("127.0.0.1", validation_alias="KB_API_HOST")
@@ -53,10 +56,6 @@ class Settings(BaseSettings):
     # best-matching sources (TD-23: the 7B model gives up on long or mixed context; measured: 2 of 5
     # wrong refusals rescued, all unanswerable questions still refused).
     refusal_retry: bool = Field(True, validation_alias="KB_REFUSAL_RETRY")
-    # Comparisons: after the per-side searches, let the local LLM pick more sections of each side's
-    # guide from its table of contents (Phase 5 step 4; one more LLM call per comparison).
-    # Read step disabled (TO-5.10, TD-14): with qwen2.5 7B it did not improve answers; re-enable with a larger model.
-    # compare_read: bool = Field(False, validation_alias="KB_COMPARE_READ")
 
     # LLM
     ollama_host: str = "http://127.0.0.1:11434"
@@ -71,7 +70,7 @@ class Settings(BaseSettings):
     openai_model: str = ""
 
     @field_validator("db_path", "docs_dir", "manifest_path", "parsed_dir", "users_path", "domain_path",
-                     "golden_path", "embed_model_path",
+                     "golden_path", "models_path", "embed_model_path",
                      "rerank_model_path", "docling_artifacts_path")
     @classmethod
     def _resolve_from_root(cls, path: Path) -> Path:

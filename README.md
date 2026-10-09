@@ -2,9 +2,9 @@
 
 A local, retrieval-augmented question-answering assistant over technical documentation (PDF, PPTX, DOCX). It answers single-fact lookups, how-to questions and cross-document comparisons, with every answer citing document, section and page.
 
-Everything runs on one workstation: Qdrant in Docker, bge-m3 embeddings and the bge-reranker in-process, and a local LLM through Ollama (OpenAI optional, per-document opt-in).
+Everything runs on one workstation: Qdrant in Docker, bge-m3 embeddings and the bge-reranker in-process, and a local LLM through Ollama. Other models (OpenAI, Mistral, Gemini, Claude) can be added in `config/models.yaml` and chosen per question; they only ever see documents cleared for external use (`external_ok` in the manifest).
 
-> **Status:** ingestion, retrieval, cited answers, evaluation, chat API and web UI are working. See [Documentation](#documentation) for the commands, settings, API and evaluation. Project notes are kept locally (`docs/local/`), not in the repository.
+> **Status:** ingestion, retrieval, cited answers (including comparisons across documents), evaluation, chat API, web UI and a configurable choice of language model are working. See [Documentation](#documentation) for the commands, settings, API and evaluation. Project notes are kept locally (`docs/local/`), not in the repository.
 
 ## How it works
 
@@ -70,6 +70,7 @@ cd knowledgebase_assistant
    cp config/manifest.example.csv config/manifest.csv
    cp config/users.example.yaml config/users.yaml
    cp config/domain.example.yaml config/domain.yaml
+   cp config/models.example.yaml config/models.yaml     # optional: language models (keys go in .env)
    cp eval/golden.example.json eval/golden.json
    ```
    See [docs/configuration.md](docs/configuration.md).
@@ -112,8 +113,8 @@ src/kb/
   ingest/          manifest · parse (Docling) · structure (sections) · chunk · index (Qdrant)
   store/           embed (bge-m3 dense + sparse) · vectorstore (Qdrant collection)
   retrieve/        search (filters, hybrid) · rerank · assemble · pipeline · gate · release
-  llm/             providers (Ollama, OpenAI) · prompts (prompt, citations) · condense (follow-ups) · judge
-  agent/           route (comparison?) · tools (search_kb, get_section, outline, read_section; access-checked) · compare (split, one search per side; read step disabled)
+  llm/             catalogue (models.yaml) · providers (adapters: Ollama, OpenAI-compatible, Anthropic) · registry (roles, privacy, fallbacks) · prompts · condense · judge
+  agent/           route (comparison?) · tools (search_kb, get_section, outline, read_section; access-checked) · compare (split, one search per side; read step per model)
   answer/          pipeline: route -> retrieve -> gate -> LLM -> citations (-> retry on a refusal), in one trace
   evaluation/      coverage · retrieval (kb eval) · answers (kb eval-answers)
   api/             app (FastAPI) · chat (SSE turn) · services · health · users · sessions · static/ (chat UI)

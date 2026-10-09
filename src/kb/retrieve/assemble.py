@@ -34,6 +34,58 @@ FRONT_MATTER_FACTOR = 0.8    # executive summaries rank as if their rerank score
 _FRONT_MATTER = re.compile(r"^(?:0\s+)?executive\s+summary\b", re.IGNORECASE)
 UNITS_PER_SIDE = 3           # comparisons: context slots reserved for each side
 COMPARE_MAX_TOKENS = 4000    # comparisons: total context budget (two or three sides)
+LARGE_MAX_TOKENS = 12000     # context budget cap for large-context models (Phase 6)
+LARGE_MAX_UNITS = 16
+LARGE_UNITS_PER_SIDE = 8
+
+
+@dataclass(frozen=True)
+class ContextBudget:
+    """How much context one model gets: units and tokens, normal path and comparisons."""
+
+    max_units: int = MAX_UNITS
+    max_tokens: int = MAX_TOKENS
+    per_side: int = UNITS_PER_SIDE
+    compare_tokens: int = COMPARE_MAX_TOKENS
+
+
+DEFAULT_BUDGET = ContextBudget()
+
+
+def budget_for(context_tokens: int, max_output_tokens: int) -> ContextBudget:
+    """The context budget for a model: a quarter of what its window leaves after the answer, never
+    less than the defaults (tuned on the 8k local model) and at most LARGE_MAX_TOKENS.
+
+    An 8k model with a 1,500-token answer gets exactly the defaults (6 units, 3,000 tokens; 3 per side,
+    4,000 for comparisons); larger windows scale units and tokens up in proportion, capped.
+    """
+    tokens = min(LARGE_MAX_TOKENS, max(MAX_TOKENS, (context_tokens - max_output_tokens) // 4))
+    if tokens == MAX_TOKENS:
+        return DEFAULT_BUDGET
+    scale = tokens / MAX_TOKENS
+    return ContextBudget(max_units=min(LARGE_MAX_UNITS, round(MAX_UNITS * scale)), max_tokens=tokens,
+                         per_side=min(LARGE_UNITS_PER_SIDE, round(UNITS_PER_SIDE * scale)),
+                         compare_tokens=round(COMPARE_MAX_TOKENS * scale))
+
+
+def fit_context(units: list["ContextUnit"], budget: ContextBudget, sides: bool = False) -> list["ContextUnit"]:
+    """The units that fit `budget`, in their order (best first): a smaller model answering after
+    retrieval was sized for a larger one gets the top of the same context."""
+    limit_units = budget.max_units
+    limit_tokens = budget.compare_tokens if sides else budget.max_tokens
+    kept, used, per_side = [], 0, {}
+    for unit in units:
+        if len(kept) >= limit_units and not sides:
+            break
+        if sides and per_side.get(unit.side, 0) >= budget.per_side:
+            continue
+        if used + unit.tokens > limit_tokens:
+            continue
+        kept.append(unit)
+        used += unit.tokens
+        if sides:
+            per_side[unit.side] = per_side.get(unit.side, 0) + 1
+    return kept
 
 
 def page_text(page_start: int, page_end: int) -> str:

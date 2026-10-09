@@ -5,7 +5,7 @@
                                       {label: "HTTPS for on-premises services", query: "…"}]
       → search_kb once per side (the user's groups; a release only if the user named it)
       → merge: up to UNITS_PER_SIDE units per side, taken in turns, within COMPARE_MAX_TOKENS
-      → read step (KB_COMPARE_READ): the local LLM sees each side's guide as a table of contents,
+      → read step (compare_read on the answer model's profile in models.yaml): the planner sees each side's guide as a table of contents,
         with the sections it already has marked, and picks up to READ_PER_SIDE more sections per
         side; the server reads them (access-checked) and adds them to the context
       → the normal gate, LLM and citation checks, with a prompt that names the sides.

@@ -33,6 +33,7 @@ from kb.api.services import Services, load_services
 from kb.api.users import UnknownUser, User
 from kb.core.config import get_settings
 from kb.ingest.manifest import parse_release
+from kb.llm.providers import LLMError
 
 MAX_QUESTION_CHARS = 2000
 MAX_COMMENT_CHARS = 1000
@@ -44,7 +45,8 @@ class ChatRequest(BaseModel):
 
     question: str = Field(min_length=1, max_length=MAX_QUESTION_CHARS)
     session_id: str | None = None
-    provider: Literal["auto", "ollama", "openai"] | None = None
+    model: str | None = Field(None, max_length=64)       # a catalogue model name; None: the answer role
+    provider: str | None = Field(None, max_length=64)    # older name for `model` (auto / ollama / openai)
 
     @field_validator("question")
     @classmethod
@@ -156,16 +158,32 @@ def create_app(services: Services | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="session not found")
         return session
 
+    @app.get("/api/models")
+    def models(svc: Svc) -> dict:
+        """The configured models for the UI's model menu: the answer role's model, and per model whether
+        it can be used (key set) and whether it runs outside the machine (only sees external_ok sources)."""
+        registry = svc.current_models()
+        catalogue = registry.catalogue
+        return {"default": catalogue.roles["answer"], "fallback": catalogue.fallback,
+                "models": [{"name": p.name, "model": p.model, "adapter": p.adapter, "location": p.location,
+                            "ready": registry.ready(p.name)} for p in catalogue.models.values()]}
+
     @app.post("/api/chat")
     def chat(body: ChatRequest, svc: Svc, user: CurrentUser, conn: Db) -> StreamingResponse:
         """Answer a question in a conversation (new one if no session_id), streamed as server-sent events."""
+        model = body.model or body.provider
+        if model:
+            try:
+                svc.current_models().resolve(model)
+            except LLMError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
         if body.session_id:
             session = sessions.get_session(conn, body.session_id, user.user_id)
             if session is None:
                 raise HTTPException(status_code=404, detail="session not found")
         else:
             session = sessions.create_session(conn, user)
-        return StreamingResponse(stream_turn(svc, user, session, body.question, body.provider),
+        return StreamingResponse(stream_turn(svc, user, session, body.question, model),
                                  media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 

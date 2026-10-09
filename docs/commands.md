@@ -165,6 +165,15 @@ uv run kb search "How do I enable single sign-on?" --context --show 5         # 
 uv run kb search "..." --rerank-top 0 --min-score 0.3                           # rerank all, drop weak context
 ```
 
+### `kb models` — model catalogue
+
+| Command | What it does |
+|---|---|
+| `uv run kb models list` | Validate `config/models.yaml` (every problem listed at once) and show each model: adapter, local / external, whether its key is set, context and output size, model id and the roles it has |
+| `uv run kb models check [--model NAME]` | Send every configured model (or the named ones) a tiny text prompt and a JSON prompt: reachable, seconds, token counts, whether JSON works. Models without a key are skipped; costs a few tokens per model |
+
+Without `config/models.yaml` it shows the catalogue built from the older settings (`LLM_MODEL`, `OPENAI_*`).
+
 ### `kb ask` — answer a question with citations
 
 | Option | Default | Meaning |
@@ -172,7 +181,7 @@ uv run kb search "..." --rerank-top 0 --min-score 0.3                           
 | `QUERY` | | The question (required, in quotes) |
 | `--groups GROUP` | `all` | User access group(s); repeatable or comma-separated |
 | `--release RELEASE` | any | Only documents that apply to this release, e.g. `R2024x` |
-| `--provider` | `KB_LLM_PROVIDER` (auto) | `auto`, `ollama` or `openai` |
+| `--model NAME` | the answer role in `config/models.yaml` | Answer model by catalogue name (`auto`, `ollama`, `openai` still accepted). External models only see documents with `external_ok`; otherwise the local fallback answers, with a notice |
 | `--mode` | `hybrid` | `hybrid`, `dense` or `sparse` |
 | `--no-rerank` | | Skip the reranker; without a rerank score the gate always passes |
 | `--rerank-top N` | `KB_RERANK_TOP` (20) | Rerank only the first N candidates; `0` = all |
@@ -190,7 +199,7 @@ uv run kb ask "Which tool captures traffic for a performance analysis?" --groups
 uv run kb ask "Which SQL Server version is supported?" --release R2026x
 uv run kb ask "How do I configure NGINX as a reverse proxy?"                   # expect "not found"
 uv run kb ask "How does the database setup differ between MSSQL and Oracle?"   # comparison: one search per side
-uv run kb ask "..." --provider openai                                        # needs OPENAI_API_KEY + OPENAI_MODEL
+uv run kb ask "..." --model claude-opus                                      # a model from config/models.yaml (key in .env)
 ```
 
 ### `kb serve` — chat API

@@ -7,6 +7,7 @@ import pytest
 from kb.answer.pipeline import Answerer, retry_context
 from kb.core.db import connect, migrate
 from kb.core.domain import Domain, use_domain
+from kb.llm.catalogue import ModelCatalogue, ModelProfile
 from kb.llm.prompts import (
     NOT_FOUND,
     build_messages,
@@ -15,8 +16,16 @@ from kb.llm.prompts import (
     source_line,
     system_prompt,
 )
-from kb.llm.providers import Generation, LLMError, OllamaProvider, select_provider
-from kb.retrieve.assemble import ContextUnit, SameText
+from kb.llm.providers import Generation, LLMError, OllamaProvider
+from kb.llm.registry import ModelRegistry
+from kb.retrieve.assemble import (
+    DEFAULT_BUDGET,
+    ContextBudget,
+    ContextUnit,
+    SameText,
+    budget_for,
+    fit_context,
+)
 from kb.retrieve.gate import gate
 from kb.retrieve.pipeline import SearchRequest, SearchResult
 from kb.retrieve.search import Candidate
@@ -124,18 +133,6 @@ def test_gate_low_score_no_context_and_unreranked():
 
 
 # -------------------------------------------------------------------------------------- providers
-
-def test_select_provider_respects_external_ok():
-    ok, blocked = [unit()], [unit(), unit("tracing", external_ok=False)]
-    assert select_provider("auto", ok, ["ollama"]) == ("ollama", None)            # OpenAI not configured
-    assert select_provider("auto", ok, ["ollama", "openai"]) == ("openai", None)
-    name, notice = select_provider("auto", blocked, ["ollama", "openai"])
-    assert name == "ollama" and "tracing" in notice
-    assert select_provider("openai", blocked, ["ollama", "openai"])[0] == "ollama"
-    assert select_provider("ollama", ok, ["ollama", "openai"]) == ("ollama", None)
-    with pytest.raises(LLMError):
-        select_provider("openai", ok, ["ollama"])
-
 
 def test_ollama_provider_streams_and_reports_tokens():
     parts = [SimpleNamespace(message=SimpleNamespace(content=t), done=False) for t in ("Use ", "port 443 [1].")]
@@ -315,7 +312,7 @@ def test_openai_failure_falls_back_to_ollama(conn):
                         {"ollama": local, "openai": external})
     answer = answerer.answer(SearchRequest("how?", rerank_top=10))
     assert answer.generation.provider == "ollama" and external.calls == 1 and local.calls == 1
-    assert any("OpenAI failed" in n for n in answer.notices)
+    assert any(n.startswith("openai failed") and "answered with ollama" in n for n in answer.notices)
 
 
 def test_domain_rules_fill_the_prompt_and_the_appended_references():
@@ -326,3 +323,71 @@ def test_domain_rules_fill_the_prompt_and_the_appended_references():
     use_domain(domain)
     refs = missing_references("See DOC-0001.", [(1, unit(text="DOC-0001 and DOC-0002, KB0433809"))])
     assert refs == ["- DOC-0002 [1]"]                     # only the domain's pattern counts
+
+
+# ------------------------------------------------------------------ per-model behaviour (Phase 6 step 4)
+
+def test_context_budget_follows_the_models_window():
+    assert budget_for(8192, 1500) == DEFAULT_BUDGET                 # the 8k local model: today's limits
+    big = budget_for(200_000, 8000)
+    assert (big.max_units, big.max_tokens, big.per_side, big.compare_tokens) == (16, 12000, 8, 16000)
+    mid = budget_for(32_000, 2000)
+    assert (mid.max_units, mid.max_tokens, mid.per_side, mid.compare_tokens) == (15, 7500, 8, 10000)
+
+
+def test_fit_context_keeps_the_best_ranked_units_within_the_budget():
+    units = [unit(f"d{i}", str(i)) for i in range(1, 9)]               # 50 tokens each
+    assert [u.doc_id for u in fit_context(units, ContextBudget(max_units=3, max_tokens=1000))] == ["d1", "d2", "d3"]
+    assert len(fit_context(units, ContextBudget(max_units=8, max_tokens=120))) == 2
+    for u, side in zip(units, "ABABABAB"):
+        u.side = side
+    kept = fit_context(units, ContextBudget(per_side=2, compare_tokens=1000), sides=True)
+    assert [u.doc_id for u in kept] == ["d1", "d2", "d3", "d4"]
+
+
+class SizingRetriever(FakeRetriever):
+    """Records the context limits of each request."""
+
+    def retrieve(self, req, trace):
+        """Record max_context_units / max_context_tokens, then return the canned result."""
+        self.limits = (req.max_context_units, req.max_context_tokens)
+        return super().retrieve(req, trace)
+
+
+def big_and_local(llms, *, local_retry=True, big_retry=True):
+    """Registry: 'ollama' (local, 8k, the fallback) and 'big' (external, 200k), answer role 'big'."""
+    models = {"ollama": ModelProfile("ollama", "ollama", "qwen", refusal_retry=local_retry),
+              "big": ModelProfile("big", "anthropic", "claude-opus-5-5", location="external", api_key_env="UNUSED",
+                                  context_tokens=200_000, max_output_tokens=8000, refusal_retry=big_retry,
+                                  fallback="ollama")}
+    roles = {"answer": "big", "planner": "ollama", "condenser": "ollama", "judge": "ollama"}
+    return ModelRegistry(ModelCatalogue(models, roles, "ollama", "test"), llms)
+
+
+def test_retrieval_is_sized_for_the_requested_model(conn):
+    retriever = SizingRetriever(SearchResult([cand(0.9)], [unit()], "t", {}))
+    answerer = Answerer(conn, retriever, big_and_local({"ollama": FakeLLM("ollama"), "big": FakeLLM("big")}))
+    answerer.answer(SearchRequest("q?", rerank_top=10))
+    assert retriever.limits == (16, 12000)
+    answerer.answer(SearchRequest("q?", rerank_top=10), provider="ollama")
+    assert retriever.limits == (6, 3000)
+
+
+def test_a_smaller_fallback_model_gets_the_best_part_of_the_context(conn):
+    units = [unit(f"internal{i}", str(i), external_ok=False) for i in range(1, 11)]   # 10 units: privacy → local
+    local = ScriptedLLM("Answer [1].")
+    contexts = []
+    answerer = Answerer(conn, FakeRetriever(SearchResult([cand(0.9)], units, "t", {})),
+                        big_and_local({"ollama": local, "big": FakeLLM("big")}))
+    answer = answerer.answer(SearchRequest("q?", rerank_top=10), on_context=lambda c: contexts.append(len(c)))
+    assert local.source_counts == [6] and len(answer.context) == 6 and contexts == [10, 6]
+    assert answer.model_profile == "ollama"
+    assert any("smaller context window: answered from the 6 best of 10 sources" in n for n in answer.notices)
+
+
+def test_the_refusal_retry_follows_the_answering_models_profile(conn):
+    off = ScriptedLLM(NOT_FOUND, "never used")
+    answerer = Answerer(conn, FakeRetriever(SearchResult([cand(0.9)], six_units(), "t", {})),
+                        big_and_local({"ollama": off}, local_retry=False), refusal_retry=True, provider="ollama")
+    answer = answerer.answer(SearchRequest("q?", rerank_top=10))
+    assert answer.status == "not_found" and off.source_counts == [6]          # asked once: retry switched off

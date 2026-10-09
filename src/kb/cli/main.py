@@ -15,6 +15,7 @@ from kb.cli.ingest import (
     show_coverage,
     show_status,
 )
+from kb.cli.models import models_check, models_list
 from kb.cli.search import ask_command, search_command
 from kb.cli.serve import serve_command
 
@@ -29,6 +30,11 @@ def main(argv: list[str] | None = None) -> int:
     manifest = commands.add_parser("manifest", help="document manifest").add_subparsers(dest="action", required=True)
     manifest.add_parser("validate", help="validate the manifest and list documents")
     manifest.add_parser("scan", help="append draft rows for files not yet in the manifest")
+    models = commands.add_parser("models", help="language model catalogue (config/models.yaml)").add_subparsers(
+        dest="action", required=True)
+    models.add_parser("list", help="validate the catalogue and list models, roles and keys")
+    check = models.add_parser("check", help="send every configured model a tiny prompt (reachable, speed, JSON)")
+    check.add_argument("--model", action="append", metavar="NAME", help="only this model (repeatable)")
     parse = commands.add_parser("parse", help="parse documents with Docling and cache the result")
     parse.add_argument("--doc", action="append", metavar="DOC_ID", help="only this document (repeatable)")
     parse.add_argument("--force", action="store_true", help="re-parse even if a cached result exists")
@@ -71,8 +77,8 @@ def main(argv: list[str] | None = None) -> int:
     ask.add_argument("--groups", action="append", metavar="GROUP",
                      help="user access group(s), repeatable or comma-separated (default: all)")
     ask.add_argument("--release", metavar="RELEASE", help="restrict to documents for a release, e.g. R2024x")
-    ask.add_argument("--provider", choices=["auto", "ollama", "openai"],
-                     help="LLM provider (default: KB_LLM_PROVIDER, auto)")
+    ask.add_argument("--model", metavar="NAME",
+                     help="answer model from config/models.yaml (default: the answer role; also auto / ollama / openai)")
     ask.add_argument("--mode", choices=["hybrid", "dense", "sparse"], default="hybrid")
     ask.add_argument("--no-rerank", action="store_true", help="skip the reranker (and the score gate)")
     ask.add_argument("--rerank-top", type=int,
@@ -81,10 +87,6 @@ def main(argv: list[str] | None = None) -> int:
     ask.add_argument("--no-stream", action="store_true", help="print the answer only when it is complete")
     ask.add_argument("--no-compare", action="store_true",
                      help="answer comparisons with one search instead of one search per side")
-    # Read step disabled (TO-5.10, TD-14):
-    # ask.add_argument("--compare-read", action="store_true",
-    #                  help="comparisons: let the model pick more sections of each guide from its table of "
-    #                       "contents (default: KB_COMPARE_READ)")
     ask.add_argument("--no-refusal-retry", action="store_true",
                      help="do not ask again with the best sources only when the model finds no answer "
                           "(the retry is on unless KB_REFUSAL_RETRY=false)")
@@ -92,14 +94,12 @@ def main(argv: list[str] | None = None) -> int:
     eval_answers.add_argument("--questions", help="comma-separated golden ids, e.g. q001,q012 (default: all)")
     eval_answers.add_argument("--types", help="comma-separated question types: lookup, howto, compare, unanswerable")
     eval_answers.add_argument("--no-judge", action="store_true", help="skip the LLM faithfulness judge (faster)")
-    eval_answers.add_argument("--provider", choices=["auto", "ollama", "openai"],
-                              help="LLM provider for the answers (default: KB_LLM_PROVIDER, auto)")
+    eval_answers.add_argument("--model", metavar="NAME",
+                              help="answer model from config/models.yaml (default: the answer role)")
+    eval_answers.add_argument("--judge-model", metavar="NAME",
+                              help="faithfulness judge model from config/models.yaml (default: the judge role)")
     eval_answers.add_argument("--no-compare", action="store_true",
                               help="answer comparisons with one search (baseline for the comparison path)")
-    # Read step disabled (TO-5.10, TD-14):
-    # eval_answers.add_argument("--compare-read", action="store_true",
-    #                           help="comparisons: read more sections chosen from each guide's table of contents "
-    #                                "(default: KB_COMPARE_READ)")
     eval_answers.add_argument("--no-refusal-retry", action="store_true",
                               help="no second attempt after a refusal (baseline for the refusal retry)")
     eval_answers.add_argument("--details", action="store_true",
@@ -124,6 +124,8 @@ def _run(args: argparse.Namespace) -> int:
     """Run the chosen subcommand."""
     if args.command == "manifest":
         return {"validate": manifest_validate, "scan": manifest_scan}[args.action]()
+    if args.command == "models":
+        return models_list() if args.action == "list" else models_check(args.model)
     if args.command == "parse":
         return parse_documents(args.doc, args.force)
     if args.command == "status":
