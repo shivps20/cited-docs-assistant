@@ -81,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
     ask.add_argument("--no-stream", action="store_true", help="print the answer only when it is complete")
     ask.add_argument("--no-compare", action="store_true",
                      help="answer comparisons with one search instead of one search per side")
-    # Read step disabled (TO-5.1, TD-14):
+    # Read step disabled (TO-5.10, TD-14):
     # ask.add_argument("--compare-read", action="store_true",
     #                  help="comparisons: let the model pick more sections of each guide from its table of "
     #                       "contents (default: KB_COMPARE_READ)")
@@ -96,7 +96,7 @@ def main(argv: list[str] | None = None) -> int:
                               help="LLM provider for the answers (default: KB_LLM_PROVIDER, auto)")
     eval_answers.add_argument("--no-compare", action="store_true",
                               help="answer comparisons with one search (baseline for the comparison path)")
-    # Read step disabled (TO-5.1, TD-14):
+    # Read step disabled (TO-5.10, TD-14):
     # eval_answers.add_argument("--compare-read", action="store_true",
     #                           help="comparisons: read more sections chosen from each guide's table of contents "
     #                                "(default: KB_COMPARE_READ)")

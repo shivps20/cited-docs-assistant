@@ -133,7 +133,7 @@ class Answerer:
     def __init__(self, conn: sqlite3.Connection, retriever: Retriever, providers: Mapping[str, LLMProvider], *,
                  not_found_score: float = 0.1, provider: str = "auto", compare: bool = True,
                  planner: LLMProvider | None = None, refusal_retry: bool = False):
-        # Read step disabled (TO-5.1, TD-14): with qwen2.5 7B it did not improve answers; re-enable with a larger model.
+        # Read step disabled (TO-5.10, TD-14): with qwen2.5 7B it did not improve answers; re-enable with a larger model.
         # To re-enable, add the parameter back:  compare_read: bool = False
         """Keep the retriever and the available LLM providers (by name).
 
@@ -153,7 +153,7 @@ class Answerer:
         self.compare = compare
         self.planner = planner if planner is not None else providers.get(OLLAMA)
         self.refusal_retry = refusal_retry
-        # self.compare_read = compare_read      # read step disabled (TO-5.1)
+        # self.compare_read = compare_read      # read step disabled (TO-5.10)
 
     def answer(self, req: SearchRequest, *, provider: str | None = None,
                on_token: Callable[[str], None] | None = None,
@@ -200,7 +200,7 @@ class Answerer:
                             sides=sides)
             if route.kind == COMPARE and not sides:
                 answer.notices.append(f"Comparison answered with one search ({plan.reason if plan else route.reason}).")
-            # Read step disabled (TO-5.1, TD-14): with qwen2.5 7B it did not improve answers; re-enable with a larger model.
+            # Read step disabled (TO-5.10, TD-14): with qwen2.5 7B it did not improve answers; re-enable with a larger model.
             # if sides and self.compare_read and decision.passed:
             #     self._read_more(answer, tools, side_docs, trace, on_status)
             if on_context:
@@ -235,7 +235,7 @@ class Answerer:
         """The comparison read step: the local LLM picks more sections of each side's guide from its
         table of contents; they are read (access-checked) and appended to the context.
 
-        Not called at the moment (see the commented call in answer(), TO-5.1 / TD-14): measured with
+        Not called at the moment (see the commented call in answer(), TO-5.10 / TD-14): measured with
         qwen2.5 7B it picked the section holding a missing fact once in 16 comparisons, and the extra
         text made two answers worse. Kept for a larger model."""
         reads = plan_reads(self.planner, tools, answer.question, answer.context, side_docs)

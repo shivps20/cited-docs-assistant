@@ -173,7 +173,7 @@ def eval_answers_command(args) -> int:
     answerer = Answerer(conn, retriever, providers, not_found_score=s.not_found_score,
                         provider=args.provider or s.llm_provider, compare=not args.no_compare,
                         refusal_retry=s.refusal_retry and not args.no_refusal_retry)
-    # compare_read=s.compare_read or args.compare_read  — read step disabled (TO-5.1)
+    # compare_read=s.compare_read or args.compare_read  — read step disabled (TO-5.10)
     judge = None if args.no_judge else OllamaProvider(
         s.ollama_host, s.llm_model, num_ctx=s.llm_num_ctx, keep_alive=s.llm_keep_alive, temperature=0.0,
         max_tokens=1500)
@@ -197,7 +197,7 @@ def eval_answers_command(args) -> int:
         faith = "-" if r.faithfulness is None else f"{r.faithfulness:.2f}"
         flags = "".join(f for f, on in (("C", r.route == "compare"), ("M", r.no_markers), ("N", r.dropped_not_found),
                                         ("T", r.meta_talk), ("R", r.retried)) if on)
-        # ("S", r.read_sections > 0): sections read from the outline — read step disabled (TO-5.1)
+        # ("S", r.read_sections > 0): sections read from the outline — read step disabled (TO-5.10)
         print(f"{r.qid} {r.qtype:<12} {verdict} {status:<14} must {pct(r.must_found, r.must_total):>5} "
               f"art {pct(r.ref_found, r.ref_total):>4} url {pct(r.urls_found, r.urls_total):>4} "
               f"cite {pct(r.cited_correct, r.cited):>4} faith {faith:>4} {flags:<4} {r.total_ms / 1000:5.1f} s",

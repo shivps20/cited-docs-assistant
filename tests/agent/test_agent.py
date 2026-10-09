@@ -314,7 +314,7 @@ class SequencePlanner:
         return Generation(self.replies.pop(0), "ollama", "qwen", 0.5)
 
 
-@pytest.mark.skip(reason="read step disabled in the answer flow (TO-5.1, TD-14); re-enable with a larger model")
+@pytest.mark.skip(reason="read step disabled in the answer flow (TO-5.10, TD-14); re-enable with a larger model")
 def test_comparison_read_step_adds_the_chosen_sections(conn):
     add_sections(conn, "public", [("2", "2 Setup", 1, "setup text", 20)])
     planner = SequencePlanner('{"sides": [{"label": "Cloud", "query": "certificates on Cloud?"},'
