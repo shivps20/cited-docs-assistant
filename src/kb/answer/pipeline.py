@@ -1,11 +1,14 @@
 """Answer pipeline: route -> retrieve -> gate -> prompt -> LLM -> check citations, in one trace.
 
-    answerer = Answerer(conn, retriever, build_providers(settings), not_found_score=0.1)
+    answerer = Answerer(conn, retriever, ModelRegistry.load(), not_found_score=0.1)
     answer = answerer.answer(SearchRequest("How do I ...?"), on_token=print)
     print(answer.formatted())
 
 Comparison questions (kb.agent.route) are split into sides by the local LLM and searched once per
 side (kb.agent.compare), so every side reaches the context; everything after retrieval is shared.
+Which model writes the answer comes from the model registry (kb.llm.registry): the requested model,
+its fallbacks and the local fallback, filtered by the privacy policy (external models only see
+contexts whose sources all have external_ok).
 """
 
 import sqlite3
@@ -31,14 +34,8 @@ from kb.llm.prompts import (
     missing_references,
     source_line,
 )
-from kb.llm.providers import (
-    OLLAMA,
-    OPENAI,
-    Generation,
-    LLMError,
-    LLMProvider,
-    select_provider,
-)
+from kb.llm.providers import Generation, LLMError, LLMProvider
+from kb.llm.registry import AUTO, ModelRegistry, registry_from
 from kb.retrieve.assemble import ContextUnit
 from kb.retrieve.gate import GateDecision, gate
 from kb.retrieve.pipeline import Retriever, SearchRequest, stage_timings
@@ -130,28 +127,32 @@ def _source(n: int, unit: ContextUnit) -> Source:
 class Answerer:
     """Answers questions: retrieval, confidence gate, LLM generation and citation checking, in one trace."""
 
-    def __init__(self, conn: sqlite3.Connection, retriever: Retriever, providers: Mapping[str, LLMProvider], *,
-                 not_found_score: float = 0.1, provider: str = "auto", compare: bool = True,
+    def __init__(self, conn: sqlite3.Connection, retriever: Retriever,
+                 models: ModelRegistry | Mapping[str, LLMProvider] | None = None, *,
+                 not_found_score: float = 0.1, provider: str = AUTO, compare: bool = True,
                  planner: LLMProvider | None = None, refusal_retry: bool = False):
         # Read step disabled (TO-5.10, TD-14): with qwen2.5 7B it did not improve answers; re-enable with a larger model.
         # To re-enable, add the parameter back:  compare_read: bool = False
-        """Keep the retriever and the available LLM providers (by name).
+        """Keep the retriever and the model registry.
 
+        models: a ModelRegistry, a mapping of ready adapters ('ollama', optionally 'openai'), or None
+            (the configured catalogue, KB_MODELS_PATH).
         not_found_score: gate threshold on the top rerank score.
-        provider: default provider choice ('auto', 'ollama' or 'openai').
+        provider: the answer model: a catalogue name, 'auto' (the answer role) or the older 'ollama' /
+            'openai'; a question can override it (answer(provider=…)).
         compare: route comparison questions to the comparison path (False: one search for every question).
-        planner: local model that splits comparisons into sides (default: the Ollama answer provider).
+        planner: the model that splits comparisons into sides (default: the catalogue's planner role).
         refusal_retry: when the LLM refuses, ask once more with only the best-matching units (TD-23).
         (compare_read, disabled: after a comparison's per-side searches, let the local LLM pick more
             sections of each side's guide from its table of contents; see _read_more.)
         """
         self.conn = conn
         self.retriever = retriever
-        self.providers = providers
+        self.models = registry_from(models)
         self.not_found_score = not_found_score
         self.provider = provider
         self.compare = compare
-        self.planner = planner if planner is not None else providers.get(OLLAMA)
+        self.planner = planner if planner is not None else self.models.for_role("planner")
         self.refusal_retry = refusal_retry
         # self.compare_read = compare_read      # read step disabled (TO-5.10)
 
@@ -279,28 +280,35 @@ class Answerer:
 
     def _generate(self, answer: Answer, trace: Tracer, requested: str,
                   on_token: Callable[[str], None] | None) -> None:
-        """Pick the provider, generate the answer (falling back from OpenAI to Ollama on failure)
-        and check its citations; fills in the answer's text, status and sources.
+        """Generate the answer with the first model of the answer chain that works (requested model,
+        its fallbacks, the local fallback; external models only for external_ok contexts), then check
+        its citations; fills in the answer's text, status and sources.
         """
-        name, notice = select_provider(requested, answer.context, list(self.providers))
+        chain, notice = self.models.answer_chain(requested, answer.context)
         if notice:
             answer.notices.append(notice)
         messages = build_messages(answer.question, answer.context, answer.sides)
 
-        with trace.stage("generate", provider=name, model=self.providers[name].model,
+        first = chain[0]
+        with trace.stage("generate", profile=first.name, provider=first.name,
+                         model=self.models.provider(first.name).model,
                          prompt_chars=sum(len(m["content"]) for m in messages)) as stage:
-            try:
-                generation = self.providers[name].generate(messages, on_token=on_token)
-            except LLMError as e:
-                if name != OPENAI:
-                    raise
-                # External provider down: answer locally rather than not at all.
-                answer.notices.append(f"OpenAI failed ({e}); answered with the local model instead.")
-                stage["fallback_from"] = OPENAI
-                if on_token:
-                    on_token("\n")
-                generation = self.providers[OLLAMA].generate(messages, on_token=on_token)
-            stage.update(provider=generation.provider, model=generation.model,
+            failed = []
+            for i, profile in enumerate(chain):
+                try:
+                    generation = self.models.provider(profile.name).generate(messages, on_token=on_token)
+                    break
+                except LLMError as e:
+                    if i == len(chain) - 1:
+                        raise
+                    # This model is down or refused: answer with the next one rather than not at all.
+                    failed.append(profile.name)
+                    answer.notices.append(f"{profile.name} failed ({e}); answered with {chain[i + 1].name} instead.")
+                    if on_token:
+                        on_token("\n")
+            if failed:
+                stage["fallback_from"] = failed
+            stage.update(profile=chain[len(failed)].name, provider=generation.provider, model=generation.model,
                          prompt_tokens=generation.prompt_tokens, output_tokens=generation.output_tokens,
                          load_s=generation.load_seconds, tokens_per_s=generation.tokens_per_s,
                          raw_output=generation.text)   # before citation clean-up, for debugging

@@ -17,7 +17,7 @@ All settings come from `.env` (see [.env.example](../.env.example)) through `kb.
 | `KB_NOT_FOUND_SCORE` | `0.1` | Reply "not found" without the LLM below this top rerank score (see [architecture.md](architecture.md#answering)) |
 | `KB_COMPARE_READ` | — | Disabled in code (commented out): comparisons would let the local LLM pick up to 2 more sections per side from each guide's table of contents; did not help with a 7B model |
 | `KB_REFUSAL_RETRY` | `true` | When the model replies "not found", ask once more with only the best-matching sources (3, or 2 per side of a comparison) |
-| `KB_LLM_PROVIDER` | `auto` | `auto`, `ollama` or `openai` |
+| `KB_LLM_PROVIDER` | `auto` | `auto` (the catalogue's answer role), `ollama` (the local fallback) or `openai`; superseded by `config/models.yaml` roles |
 | `KB_USERS_PATH` | `config/users.yaml` | Chat API users and their access groups |
 | `KB_API_HOST`, `KB_API_PORT` | `127.0.0.1`, `8000` | Where `kb serve` listens (keep loopback: no authentication) |
 | `KB_DOMAIN_PATH` | `config/domain.yaml` | Organisation-specific text rules (see below) |
@@ -25,7 +25,7 @@ All settings come from `.env` (see [.env.example](../.env.example)) through `kb.
 | `KB_MODELS_PATH` | `config/models.yaml` | Model catalogue: which language models exist and which job each one does (below). Without the file: `LLM_MODEL`, plus OpenAI when `OPENAI_*` is set |
 | `LLM_TEMPERATURE`, `LLM_MAX_TOKENS` | `0`, `1500` | Ollama sampling temperature; answer length cap (both providers) |
 | `OLLAMA_HOST`, `LLM_MODEL`, `LLM_NUM_CTX` | `127.0.0.1:11434`, `qwen2.5:7b-instruct`, `8192` | Local LLM |
-| `OPENAI_API_KEY`, `OPENAI_MODEL` | *(empty)* | Optional external LLM |
+| `OPENAI_API_KEY`, `OPENAI_MODEL` | *(empty)* | Optional external LLM when there is no `config/models.yaml` (with a catalogue, OpenAI is a catalogue entry) |
 
 ## Organisation-specific data (kept local)
 

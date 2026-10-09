@@ -15,7 +15,7 @@ from kb.llm.prompts import (
     source_line,
     system_prompt,
 )
-from kb.llm.providers import Generation, LLMError, OllamaProvider, select_provider
+from kb.llm.providers import Generation, LLMError, OllamaProvider
 from kb.retrieve.assemble import ContextUnit, SameText
 from kb.retrieve.gate import gate
 from kb.retrieve.pipeline import SearchRequest, SearchResult
@@ -124,18 +124,6 @@ def test_gate_low_score_no_context_and_unreranked():
 
 
 # -------------------------------------------------------------------------------------- providers
-
-def test_select_provider_respects_external_ok():
-    ok, blocked = [unit()], [unit(), unit("tracing", external_ok=False)]
-    assert select_provider("auto", ok, ["ollama"]) == ("ollama", None)            # OpenAI not configured
-    assert select_provider("auto", ok, ["ollama", "openai"]) == ("openai", None)
-    name, notice = select_provider("auto", blocked, ["ollama", "openai"])
-    assert name == "ollama" and "tracing" in notice
-    assert select_provider("openai", blocked, ["ollama", "openai"])[0] == "ollama"
-    assert select_provider("ollama", ok, ["ollama", "openai"]) == ("ollama", None)
-    with pytest.raises(LLMError):
-        select_provider("openai", ok, ["ollama"])
-
 
 def test_ollama_provider_streams_and_reports_tokens():
     parts = [SimpleNamespace(message=SimpleNamespace(content=t), done=False) for t in ("Use ", "port 443 [1].")]
@@ -315,7 +303,7 @@ def test_openai_failure_falls_back_to_ollama(conn):
                         {"ollama": local, "openai": external})
     answer = answerer.answer(SearchRequest("how?", rerank_top=10))
     assert answer.generation.provider == "ollama" and external.calls == 1 and local.calls == 1
-    assert any("OpenAI failed" in n for n in answer.notices)
+    assert any(n.startswith("openai failed") and "answered with ollama" in n for n in answer.notices)
 
 
 def test_domain_rules_fill_the_prompt_and_the_appended_references():

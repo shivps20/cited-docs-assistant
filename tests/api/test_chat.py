@@ -15,6 +15,7 @@ from kb.core.config import get_settings
 from kb.core.db import connect, migrate
 from kb.llm.condense import clean_rewrite, condense, needs_condensing
 from kb.llm.providers import Generation, LLMError
+from kb.llm.registry import ModelRegistry
 from kb.retrieve.assemble import ContextUnit
 from kb.retrieve.gate import GateDecision
 from kb.retrieve.release import resolve_release
@@ -140,7 +141,7 @@ def app_env(tmp_path, monkeypatch):
     monkeypatch.setattr(health, "ollama_status", lambda host, model: {"ok": True, "detail": "fake"})
     svc = FakeServices(settings=get_settings().model_copy(update={"db_path": db}), users=USERS,
                        client=SimpleNamespace(), embedder=object(), reranker=object(),
-                       providers={"ollama": object()}, condenser=FakeCondenser())
+                       models=ModelRegistry.from_providers({"ollama": SimpleNamespace(model="qwen")}), condenser=FakeCondenser())
     svc.calls = []
     with TestClient(create_app(svc)) as client:
         yield client, svc, db

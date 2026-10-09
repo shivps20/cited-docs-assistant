@@ -47,11 +47,13 @@ def ollama_status(host: str, model: str) -> dict:
 
 
 def models_status(services: Services) -> dict:
-    """The CPU models are loaded; lists the LLM providers available."""
+    """The CPU models are loaded; names the answer model and the models whose key is set."""
     loaded = services.embedder is not None and services.reranker is not None
-    detail = (f"bge-m3 + reranker loaded in {services.load_seconds:.1f} s; providers: "
-              f"{', '.join(services.providers) or 'none'}") if loaded else "embedding / reranking models not loaded"
-    return {"ok": loaded and bool(services.providers), "detail": detail}
+    catalogue = services.models.catalogue
+    ready = [name for name in catalogue.models if services.models.ready(name)]
+    detail = (f"bge-m3 + reranker loaded in {services.load_seconds:.1f} s; answer model: {catalogue.roles['answer']}; "
+              f"models ready: {', '.join(ready) or 'none'}") if loaded else "embedding / reranking models not loaded"
+    return {"ok": loaded and bool(ready), "detail": detail}
 
 
 def check_health(services: Services) -> dict:

@@ -9,6 +9,7 @@ from kb.api.services import Services
 from kb.api.users import UnknownUser, User, UserDirectory, UsersError, load_users
 from kb.core.config import ROOT, get_settings
 from kb.core.db import connect, migrate
+from kb.llm.registry import ModelRegistry
 
 USERS = UserDirectory({"guest": User("guest", "Guest"), "internal_user": User("internal_user", "Internal", ("internal",))},
                       "guest")
@@ -80,7 +81,7 @@ def client(db_path, monkeypatch):
     monkeypatch.setattr(health, "ollama_status", lambda host, model: {"ok": True, "detail": "fake"})
     settings = get_settings().model_copy(update={"db_path": db_path})
     svc = Services(settings=settings, users=USERS, client=FakeQdrant(), embedder=object(), reranker=object(),
-                   providers={"ollama": object()}, load_seconds=1.5)
+                   models=ModelRegistry.from_providers({"ollama": SimpleNamespace(model="qwen")}), load_seconds=1.5)
     with TestClient(create_app(svc)) as c:
         yield c
 

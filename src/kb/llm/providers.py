@@ -9,20 +9,17 @@ All stream: `generate` calls `on_token` for every piece of text as it arrives an
 text with token counts and timings in a `Generation`; every failure becomes an `LLMError`.
 `json_format=True` asks for a reply that is one JSON object (with `json_schema`, one that follows
 the schema where the provider supports it). `make_provider()` builds the adapter for a catalogue
-profile (kb.llm.catalogue). Which model may see which context is decided in `select_provider`:
-text goes to an external model only when every context source has external_ok.
+profile (kb.llm.catalogue). Which model may see which context is decided by the model registry
+(kb.llm.registry): text goes to an external model only when every context source has external_ok.
 """
 
 import re
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 import httpx
-
-from kb.core.config import Settings
-from kb.retrieve.assemble import ContextUnit
 
 if TYPE_CHECKING:
     from kb.llm.catalogue import ModelProfile
@@ -87,10 +84,12 @@ class OllamaProvider:
     name = OLLAMA
 
     def __init__(self, host: str, model: str, *, num_ctx: int = 8192, keep_alive: str = "10m",
-                 temperature: float = 0.0, max_tokens: int = 1500, timeout: float = 600):
-        """Client for the Ollama server at `host`, with context size, temperature and answer cap."""
+                 temperature: float = 0.0, max_tokens: int = 1500, timeout: float = 600, name: str = OLLAMA):
+        """Client for the Ollama server at `host`, with context size, temperature and answer cap.
+        name: the catalogue profile it serves (shown in traces)."""
         from ollama import Client
 
+        self.name = name
         self.host = host
         self.model = model
         self.options = {"num_ctx": num_ctx, "temperature": temperature, "num_predict": max_tokens}
@@ -287,7 +286,7 @@ def make_provider(profile: "ModelProfile") -> LLMProvider:
         return OllamaProvider(profile.base_url, profile.model, num_ctx=profile.context_tokens,
                               keep_alive=profile.keep_alive,
                               temperature=0.0 if profile.temperature is None else profile.temperature,
-                              max_tokens=profile.max_output_tokens, timeout=profile.timeout)
+                              max_tokens=profile.max_output_tokens, timeout=profile.timeout, name=profile.name)
     if profile.adapter == "openai_compatible":
         return OpenAIProvider(profile.api_key, profile.model, max_tokens=profile.max_output_tokens,
                               timeout=profile.timeout, base_url=profile.base_url, name=profile.name,
@@ -296,39 +295,3 @@ def make_provider(profile: "ModelProfile") -> LLMProvider:
         return AnthropicProvider(profile.api_key, profile.model, max_tokens=profile.max_output_tokens,
                                  timeout=profile.timeout, effort=profile.effort, name=profile.name)
     raise ValueError(f"unknown adapter {profile.adapter!r}")
-
-
-def build_providers(settings: Settings) -> dict[str, LLMProvider]:
-    """Ollama always; OpenAI when both OPENAI_API_KEY and OPENAI_MODEL are set."""
-    providers: dict[str, LLMProvider] = {
-        OLLAMA: OllamaProvider(settings.ollama_host, settings.llm_model, num_ctx=settings.llm_num_ctx,
-                               keep_alive=settings.llm_keep_alive, temperature=settings.llm_temperature,
-                               max_tokens=settings.llm_max_tokens),
-    }
-    if settings.openai_api_key and settings.openai_model:
-        providers[OPENAI] = OpenAIProvider(settings.openai_api_key, settings.openai_model,
-                                           max_tokens=settings.llm_max_tokens)
-    return providers
-
-
-def select_provider(requested: str, context: Sequence[ContextUnit], available: Sequence[str]
-                    ) -> tuple[str, str | None]:
-    """(provider name, notice for the user or None).
-
-    auto    OpenAI when configured and every context source has external_ok, else Ollama.
-    ollama  always Ollama.
-    openai  OpenAI if every source has external_ok; otherwise Ollama, with a notice.
-    """
-    if requested not in ("auto", OLLAMA, OPENAI):
-        raise ValueError(f"unknown provider {requested!r}")
-    if requested == OLLAMA:
-        return OLLAMA, None
-    if OPENAI not in available:
-        if requested == OPENAI:
-            raise LLMError("OpenAI is not configured: set OPENAI_API_KEY and OPENAI_MODEL in .env")
-        return OLLAMA, None
-    blocked = sorted({u.doc_id for u in context if not u.external_ok})
-    if blocked:
-        return OLLAMA, (f"Answered with the local model: {', '.join(blocked)} may not be sent to an "
-                        "external LLM (external_ok = false).")
-    return OPENAI, None

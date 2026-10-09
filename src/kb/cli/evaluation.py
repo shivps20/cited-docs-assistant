@@ -144,9 +144,11 @@ def eval_answers_command(args) -> int:
     from kb.core.db import connect
     from kb.evaluation.answers import run_answer_eval
     from kb.evaluation.retrieval import full_access, load_golden
+    from kb.llm.catalogue import CatalogueError
     from kb.llm.judge import judge_faithfulness
     from kb.llm.prompts import system_prompt
-    from kb.llm.providers import LLMError, OllamaProvider, build_providers
+    from kb.llm.providers import LLMError
+    from kb.llm.registry import ModelRegistry
     from kb.retrieve.pipeline import Retriever, SearchRequest
     from kb.retrieve.rerank import BgeReranker
     from kb.store.embed import BgeM3Embedder
@@ -169,14 +171,16 @@ def eval_answers_command(args) -> int:
           f"judge {'off' if args.no_judge else 'on'}\n", flush=True)
     conn = connect()
     retriever = Retriever(conn, get_client(), s.qdrant_collection, embedder, reranker)
-    providers = build_providers(s)
-    answerer = Answerer(conn, retriever, providers, not_found_score=s.not_found_score,
+    try:
+        models = ModelRegistry.load()
+    except CatalogueError as e:
+        print(e)
+        return 1
+    answerer = Answerer(conn, retriever, models, not_found_score=s.not_found_score,
                         provider=args.provider or s.llm_provider, compare=not args.no_compare,
                         refusal_retry=s.refusal_retry and not args.no_refusal_retry)
     # compare_read=s.compare_read or args.compare_read  — read step disabled (TO-5.10)
-    judge = None if args.no_judge else OllamaProvider(
-        s.ollama_host, s.llm_model, num_ctx=s.llm_num_ctx, keep_alive=s.llm_keep_alive, temperature=0.0,
-        max_tokens=1500)
+    judge = None if args.no_judge else models.for_role("judge")
 
     def answer_fn(question: str):
         """Answer one golden question with full access and no release filter."""
@@ -250,6 +254,7 @@ def eval_answers_command(args) -> int:
 
     report["config"] = {
         "llm_model": s.llm_model, "provider": args.provider or s.llm_provider, "temperature": s.llm_temperature,
+        "models": models.describe(),
         "rerank_top": s.rerank_top, "not_found_score": s.not_found_score, "judge": not args.no_judge,
         "compare": not args.no_compare,
         "prompt_sha": hashlib.sha256(system_prompt().encode()).hexdigest()[:12],
