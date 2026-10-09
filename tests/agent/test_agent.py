@@ -17,7 +17,9 @@ from kb.agent.tools import KBTools, OutlineEntry
 from kb.answer.pipeline import Answerer
 from kb.core.db import connect, migrate
 from kb.core.tracing import Tracer
+from kb.llm.catalogue import ROLES, ModelCatalogue, ModelProfile
 from kb.llm.providers import Generation
+from kb.llm.registry import ModelRegistry
 from kb.retrieve.assemble import ContextUnit, demote_front_matter, merge_contexts
 from kb.retrieve.pipeline import SearchRequest, SearchResult
 from kb.retrieve.search import Candidate
@@ -314,7 +316,6 @@ class SequencePlanner:
         return Generation(self.replies.pop(0), "ollama", "qwen", 0.5)
 
 
-@pytest.mark.skip(reason="read step disabled in the answer flow (TO-5.10, TD-14); re-enable with a larger model")
 def test_comparison_read_step_adds_the_chosen_sections(conn):
     add_sections(conn, "public", [("2", "2 Setup", 1, "setup text", 20)])
     planner = SequencePlanner('{"sides": [{"label": "Cloud", "query": "certificates on Cloud?"},'
@@ -323,15 +324,18 @@ def test_comparison_read_step_adds_the_chosen_sections(conn):
     retriever = RecordingRetriever({"certificates on Cloud?": side_result("public#1", 0.95),
                                     "certificates on premises?": side_result("secret#1", 0.80)})
     statuses = []
-    answer = Answerer(conn, retriever, {"ollama": FakeLLM()}, planner=planner, compare_read=True).answer(
+    reader = ModelRegistry(ModelCatalogue({"strong": ModelProfile("strong", "ollama", "big", compare_read=True)},
+                                          {r: "strong" for r in ROLES}, "strong"), {"strong": FakeLLM()})
+    answer = Answerer(conn, retriever, reader, planner=planner).answer(
         SearchRequest("Certificates on Cloud versus on premises?"), on_status=lambda s, d: statuses.append((s, d)))
-    # the user (group 'all') cannot see 'secret', so only side A gets an outline and a read
+    # the answer model's profile has compare_read: true; the user (group 'all') cannot see 'secret',
+    # so only side A gets an outline and a read
     assert [(u.section_id, u.side) for u in answer.context][-1] == ("public#2", "Cloud")
     assert answer.read_sections == 1 and planner.calls == 2
     assert ("reading", {"sections": ["Public, Section 2, pp. 3-4"]}) in statuses
     read = conn.execute("SELECT data FROM trace_stages WHERE trace_id = ? AND stage = 'read'", (answer.trace_id,)).fetchone()
     assert json.loads(read["data"])["chosen"] == ["public#2"]
-    off = Answerer(conn, retriever, {"ollama": FakeLLM()},
+    off = Answerer(conn, retriever, {"ollama": FakeLLM()},             # compare_read off (the default)
                    planner=SequencePlanner('{"sides": [{"label": "Cloud", "query": "certificates on Cloud?"},'
                                            ' {"label": "On premises", "query": "certificates on premises?"}]}'))
     assert off.answer(SearchRequest("Certificates on Cloud versus on premises?")).read_sections == 0

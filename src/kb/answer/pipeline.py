@@ -11,6 +11,7 @@ its fallbacks and the local fallback, filtered by the privacy policy (external m
 contexts whose sources all have external_ok).
 """
 
+import dataclasses
 import sqlite3
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -36,7 +37,7 @@ from kb.llm.prompts import (
 )
 from kb.llm.providers import Generation, LLMError, LLMProvider
 from kb.llm.registry import AUTO, ModelRegistry, registry_from
-from kb.retrieve.assemble import ContextUnit
+from kb.retrieve.assemble import ContextUnit, budget_for, fit_context
 from kb.retrieve.gate import GateDecision, gate
 from kb.retrieve.pipeline import Retriever, SearchRequest, stage_timings
 from kb.retrieve.search import Candidate
@@ -84,6 +85,7 @@ class Answer:
     sides: list[str] = field(default_factory=list)       # comparisons: the items compared
     retried_from: int = 0                   # units of the first attempt, when a refusal was retried
     read_sections: int = 0                  # sections added by the comparison read step
+    model_profile: str = ""                 # the catalogue model that wrote the answer
 
     @property
     def refused_by(self) -> str | None:
@@ -131,8 +133,6 @@ class Answerer:
                  models: ModelRegistry | Mapping[str, LLMProvider] | None = None, *,
                  not_found_score: float = 0.1, provider: str = AUTO, compare: bool = True,
                  planner: LLMProvider | None = None, refusal_retry: bool = False):
-        # Read step disabled (TO-5.10, TD-14): with qwen2.5 7B it did not improve answers; re-enable with a larger model.
-        # To re-enable, add the parameter back:  compare_read: bool = False
         """Keep the retriever and the model registry.
 
         models: a ModelRegistry, a mapping of ready adapters ('ollama', optionally 'openai'), or None
@@ -143,8 +143,8 @@ class Answerer:
         compare: route comparison questions to the comparison path (False: one search for every question).
         planner: the model that splits comparisons into sides (default: the catalogue's planner role).
         refusal_retry: when the LLM refuses, ask once more with only the best-matching units (TD-23).
-        (compare_read, disabled: after a comparison's per-side searches, let the local LLM pick more
-            sections of each side's guide from its table of contents; see _read_more.)
+        The read step and the refusal retry are switched per model in the catalogue (compare_read,
+        refusal_retry); refusal_retry here can switch the retry off for every model.
         """
         self.conn = conn
         self.retriever = retriever
@@ -154,7 +154,6 @@ class Answerer:
         self.compare = compare
         self.planner = planner if planner is not None else self.models.for_role("planner")
         self.refusal_retry = refusal_retry
-        # self.compare_read = compare_read      # read step disabled (TO-5.10)
 
     def answer(self, req: SearchRequest, *, provider: str | None = None,
                on_token: Callable[[str], None] | None = None,
@@ -171,6 +170,10 @@ class Answerer:
         condensed follow-up (the trace keeps both). pre_stages: (name, ms, data) of stages timed before
         the trace started, recorded first (e.g. condensing).
         """
+        requested = provider or self.provider
+        target = self.models.catalogue.profile(self.models.resolve(requested))   # the model retrieval is sized for
+        budget = budget_for(target.context_tokens, target.max_output_tokens)
+        req = dataclasses.replace(req, max_context_units=budget.max_units, max_context_tokens=budget.max_tokens)
         with Tracer(self.conn, asked or req.query, user_id=req.user_id, session_id=req.session_id) as trace:
             if asked and asked != req.query:
                 trace.set(standalone_query=req.query)
@@ -183,7 +186,8 @@ class Answerer:
                 total = len(plan.sides)
                 on_side = (lambda i, side: on_status("searching_side", {"side": side.label, "index": i, "total": total})
                            ) if on_status else None
-                result = retrieve_sides(tools, req.query, plan.sides, on_side=on_side, side_docs=side_docs)
+                result = retrieve_sides(tools, req.query, plan.sides, on_side=on_side, side_docs=side_docs,
+                                        per_side=budget.per_side, max_tokens=budget.compare_tokens)
                 trace.set(top_rerank_score=result.candidates[0].rerank_score if result.candidates else None)
             else:
                 result = self.retriever.retrieve(req, trace)
@@ -201,15 +205,17 @@ class Answerer:
                             sides=sides)
             if route.kind == COMPARE and not sides:
                 answer.notices.append(f"Comparison answered with one search ({plan.reason if plan else route.reason}).")
-            # Read step disabled (TO-5.10, TD-14): with qwen2.5 7B it did not improve answers; re-enable with a larger model.
-            # if sides and self.compare_read and decision.passed:
-            #     self._read_more(answer, tools, side_docs, trace, on_status)
+            # Read step (TO-5.10): only for an answer model whose profile has compare_read: true; off for
+            # every model by default (with qwen2.5 7B it did not improve answers).
+            if sides and target.compare_read and decision.passed:
+                self._read_more(answer, tools, side_docs, trace, on_status)
             if on_context:
-                on_context(result.context)
+                on_context(answer.context)
             if decision.passed:
-                self._generate(answer, trace, provider or self.provider, on_token)
-                if self.refusal_retry and answer.status == NOT_FOUND_STATUS:
-                    self._retry_smaller(answer, trace, provider or self.provider, on_token, on_context, on_status)
+                self._generate(answer, trace, requested, on_token, on_context)
+                if (self.refusal_retry and answer.status == NOT_FOUND_STATUS
+                        and self._profile_retries(answer.model_profile)):
+                    self._retry_smaller(answer, trace, requested, on_token, on_context, on_status)
             trace.set(answer=answer.text, sources=[s.__dict__ for s in answer.sources])
         answer.timings_ms = stage_timings(trace)
         return answer
@@ -236,9 +242,9 @@ class Answerer:
         """The comparison read step: the local LLM picks more sections of each side's guide from its
         table of contents; they are read (access-checked) and appended to the context.
 
-        Not called at the moment (see the commented call in answer(), TO-5.10 / TD-14): measured with
-        qwen2.5 7B it picked the section holding a missing fact once in 16 comparisons, and the extra
-        text made two answers worse. Kept for a larger model."""
+        Runs only when the answer model's catalogue profile has compare_read: true (off for every model
+        by default). Measured with qwen2.5 7B it picked the section holding a missing fact once in 16
+        comparisons and the extra text made two answers worse (TO-5.10, TD-14); kept for larger models."""
         reads = plan_reads(self.planner, tools, answer.question, answer.context, side_docs)
         units = read_sections(tools, reads.reads)
         trace.add_stage("read", reads.seconds * 1000, reason=reads.reason, chosen=[sid for _, sid in reads.reads],
@@ -270,7 +276,7 @@ class Answerer:
         if on_token:
             on_token("\n\n")
         answer.context = smaller
-        self._generate(answer, trace, requested, on_token)
+        self._generate(answer, trace, requested, on_token, None)
         if answer.status == ANSWERED:
             answer.retried_from = len(full)
             answer.notices.append(f"Answered on a second attempt with the {len(smaller)} best-matching sources; "
@@ -278,23 +284,35 @@ class Answerer:
         else:
             answer.context = full
 
+    def _profile_retries(self, name: str) -> bool:
+        """Does the catalogue profile that answered allow the refusal retry (refusal_retry in models.yaml)?"""
+        models = self.models.catalogue.models
+        return name not in models or models[name].refusal_retry
+
     def _generate(self, answer: Answer, trace: Tracer, requested: str,
-                  on_token: Callable[[str], None] | None) -> None:
+                  on_token: Callable[[str], None] | None,
+                  on_context: Callable[[list[ContextUnit]], None] | None = None) -> None:
         """Generate the answer with the first model of the answer chain that works (requested model,
         its fallbacks, the local fallback; external models only for external_ok contexts), then check
         its citations; fills in the answer's text, status and sources.
+
+        Each model gets the context fitted to its own budget (a smaller model than the one retrieval
+        was sized for gets the best-ranked part); on_context receives the reduced context when it shrinks.
         """
         chain, notice = self.models.answer_chain(requested, answer.context)
         if notice:
             answer.notices.append(notice)
-        messages = build_messages(answer.question, answer.context, answer.sides)
+        full = answer.context
 
         first = chain[0]
         with trace.stage("generate", profile=first.name, provider=first.name,
-                         model=self.models.provider(first.name).model,
-                         prompt_chars=sum(len(m["content"]) for m in messages)) as stage:
+                         model=self.models.provider(first.name).model) as stage:
             failed = []
             for i, profile in enumerate(chain):
+                context = fit_context(full, budget_for(profile.context_tokens, profile.max_output_tokens),
+                                      sides=bool(answer.sides))
+                messages = build_messages(answer.question, context, answer.sides)
+                stage["prompt_chars"] = sum(len(m["content"]) for m in messages)
                 try:
                     generation = self.models.provider(profile.name).generate(messages, on_token=on_token)
                     break
@@ -308,6 +326,14 @@ class Answerer:
                         on_token("\n")
             if failed:
                 stage["fallback_from"] = failed
+            if len(context) < len(full):
+                stage["context_fitted"] = [len(full), len(context)]
+                answer.notices.append(f"{profile.name} has a smaller context window: answered from the "
+                                      f"{len(context)} best of {len(full)} sources.")
+                answer.context = context
+                if on_context:
+                    on_context(context)
+            answer.model_profile = profile.name
             stage.update(profile=chain[len(failed)].name, provider=generation.provider, model=generation.model,
                          prompt_tokens=generation.prompt_tokens, output_tokens=generation.output_tokens,
                          load_s=generation.load_seconds, tokens_per_s=generation.tokens_per_s,

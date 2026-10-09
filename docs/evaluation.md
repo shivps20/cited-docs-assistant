@@ -55,7 +55,7 @@ Runs every golden question through the full pipeline (full access, no release fi
 - **Content:** share of `must_include` strings, article numbers and URLs from the expected answer that appear in the answer.
 - **Citations:** precision (cited sources on a golden document and pages) and document recall (golden documents cited, which matters for comparisons); whether the context held a golden source at all, to separate retrieval from generation failures.
 - **Faithfulness (LLM judge):** qwen splits the answer into claims and quotes the evidence for each; a claim counts as supported only if its quote occurs word for word in the context. Same model judging its own answers: read flagged claims, don't treat 1.0 as proof.
-- **Style flags:** answered on the comparison path (C), no `[n]` markers (M), a not-found sentence removed (N), talk about "the sources" (T), answered only on the retry with fewer sources (R; the summary lists them).
+- **Style flags:** answered on the comparison path (C), no `[n]` markers (M), a not-found sentence removed (N), talk about "the sources" (T), answered only on the retry with fewer sources (R; the summary lists them), sections added by the comparison read step (S, only for a model with `compare_read: true`).
 
 One line per question as it runs, then a summary; the full report (answers, raw model output, unsupported claims, settings and a prompt hash for comparing runs) goes to `data/eval/answers-<timestamp>.json`. With the judge, expect ~30–40 s per question.
 

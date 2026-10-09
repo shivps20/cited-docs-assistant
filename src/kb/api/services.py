@@ -52,7 +52,6 @@ class Services:
         retriever = Retriever(conn, self.client, self.settings.qdrant_collection, self.embedder, self.reranker)
         return Answerer(conn, retriever, self.models, not_found_score=self.settings.not_found_score,
                         provider=self.settings.llm_provider, refusal_retry=self.settings.refusal_retry)
-        # compare_read=self.settings.compare_read  — read step disabled (TO-5.10)
 
 
 def load_services(settings: Settings) -> Services:

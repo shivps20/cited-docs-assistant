@@ -105,7 +105,6 @@ def ask_command(args) -> int:
     answerer = Answerer(conn, retriever, models, not_found_score=s.not_found_score,
                         provider=args.provider or s.llm_provider, compare=not args.no_compare,
                         refusal_retry=s.refusal_retry and not args.no_refusal_retry)
-    # compare_read=s.compare_read or args.compare_read  — read step disabled (TO-5.10)
     rerank_top = s.rerank_top if args.rerank_top is None else (args.rerank_top or None)
     request = SearchRequest(args.query, groups=_parse_groups(args.groups), release=release, mode=args.mode,
                             rerank=not args.no_rerank, rerank_top=rerank_top, user_id="cli")

@@ -56,10 +56,6 @@ class Settings(BaseSettings):
     # best-matching sources (TD-23: the 7B model gives up on long or mixed context; measured: 2 of 5
     # wrong refusals rescued, all unanswerable questions still refused).
     refusal_retry: bool = Field(True, validation_alias="KB_REFUSAL_RETRY")
-    # Comparisons: after the per-side searches, let the local LLM pick more sections of each side's
-    # guide from its table of contents (Phase 5 step 4; one more LLM call per comparison).
-    # Read step disabled (TO-5.10, TD-14): with qwen2.5 7B it did not improve answers; re-enable with a larger model.
-    # compare_read: bool = Field(False, validation_alias="KB_COMPARE_READ")
 
     # LLM
     ollama_host: str = "http://127.0.0.1:11434"
