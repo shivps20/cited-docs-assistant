@@ -79,7 +79,7 @@ class FakeQdrant:
 @pytest.fixture
 def client(db_path, monkeypatch):
     monkeypatch.setattr(health, "ollama_status", lambda host, model: {"ok": True, "detail": "fake"})
-    settings = get_settings().model_copy(update={"db_path": db_path})
+    settings = get_settings().model_copy(update={"db_path": db_path, "models_path": db_path.parent / "no-models.yaml"})
     svc = Services(settings=settings, users=USERS, client=FakeQdrant(), embedder=object(), reranker=object(),
                    models=ModelRegistry.from_providers({"ollama": SimpleNamespace(model="qwen")}), load_seconds=1.5)
     with TestClient(create_app(svc)) as c:

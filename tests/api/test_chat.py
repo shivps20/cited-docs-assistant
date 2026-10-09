@@ -1,4 +1,5 @@
 import json
+import os
 import threading
 from types import SimpleNamespace
 
@@ -102,7 +103,7 @@ class FakeAnswerer:
     def answer(self, req, *, provider=None, on_token=None, on_context=None, asked=None, pre_stages=(),
                on_status=None):
         self.log.append({"query": req.query, "groups": req.groups, "release": req.release, "asked": asked,
-                         "pre_stages": [s[0] for s in pre_stages]})
+                         "pre_stages": [s[0] for s in pre_stages], "model": provider})
         if req.query == "boom":
             raise LLMError("Ollama is not reachable")
         if "versus" in req.query:
@@ -139,7 +140,8 @@ def app_env(tmp_path, monkeypatch):
     migrate(c)
     c.close()
     monkeypatch.setattr(health, "ollama_status", lambda host, model: {"ok": True, "detail": "fake"})
-    svc = FakeServices(settings=get_settings().model_copy(update={"db_path": db}), users=USERS,
+    svc = FakeServices(settings=get_settings().model_copy(update={"db_path": db, "models_path": tmp_path / "no-models.yaml"}),
+                       users=USERS,
                        client=SimpleNamespace(), embedder=object(), reranker=object(),
                        models=ModelRegistry.from_providers({"ollama": SimpleNamespace(model="qwen")}), condenser=FakeCondenser())
     svc.calls = []
@@ -192,7 +194,9 @@ def test_chat_rejects_other_users_sessions_and_blank_questions(app_env):
                                 headers={"X-KB-User": "internal_user"}).text)[0][1]["session_id"]
     assert client.post("/api/chat", json={"question": "and?", "session_id": sid}).status_code == 404
     assert client.post("/api/chat", json={"question": "   "}).status_code == 422
-    assert client.post("/api/chat", json={"question": "x", "provider": "gpt"}).status_code == 422
+    unknown = client.post("/api/chat", json={"question": "x", "model": "gpt"})
+    assert unknown.status_code == 400 and "unknown model 'gpt'" in unknown.json()["detail"]
+    assert client.post("/api/chat", json={"question": "x", "provider": "gpt"}).status_code == 400   # older field
 
 
 def test_turn_waiting_for_the_model_lock_reports_queued(app_env):
@@ -277,3 +281,30 @@ def test_ui_page_is_served(app_env):
     page = client.get("/")
     assert page.status_code == 200 and "text/html" in page.headers["content-type"]
     assert "/api/chat" in page.text and "X-KB-User" in page.text
+
+
+def test_models_endpoint_and_model_choice_reach_the_answerer(app_env):
+    client, svc, _ = app_env
+    listed = client.get("/api/models").json()
+    assert listed["default"] == "ollama" and listed["fallback"] == "ollama"
+    assert listed["models"] == [{"name": "ollama", "model": "qwen", "adapter": "ollama", "location": "local", "ready": True}]
+    parse_sse(client.post("/api/chat", json={"question": "Which ports?", "model": "ollama"}).text)
+    parse_sse(client.post("/api/chat", json={"question": "Which ports?"}).text)
+    assert [c["model"] for c in svc.calls[-2:]] == ["ollama", None]
+
+
+def test_models_yaml_is_reloaded_when_it_changes_and_a_broken_edit_is_ignored(tmp_path):
+
+
+    path = tmp_path / "models.yaml"
+    settings = get_settings().model_copy(update={"models_path": path, "db_path": tmp_path / "kb.db"})
+    svc = Services(settings=settings, users=USERS, client=None, embedder=None, reranker=None,
+                   models=ModelRegistry.from_providers({"ollama": SimpleNamespace(model="qwen")}))
+    assert svc.current_models().catalogue.source == "providers"           # no file: what it started with
+    path.write_text("fallback: small\nroles: {answer: small}\nmodels:\n  small: {adapter: ollama, model: qwen-small}\n",
+                    encoding="utf-8")
+    reloaded = svc.current_models()
+    assert reloaded.catalogue.roles["answer"] == "small" and svc.condenser is not None
+    path.write_text("models: [not, a, mapping]\n", encoding="utf-8")
+    os.utime(path, (path.stat().st_atime, path.stat().st_mtime + 5))      # a newer edit, with an error
+    assert svc.current_models() is reloaded                                # the previous catalogue stays

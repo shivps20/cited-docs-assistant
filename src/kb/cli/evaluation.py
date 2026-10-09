@@ -173,13 +173,16 @@ def eval_answers_command(args) -> int:
     retriever = Retriever(conn, get_client(), s.qdrant_collection, embedder, reranker)
     try:
         models = ModelRegistry.load()
-    except CatalogueError as e:
+        answer_model = models.resolve(args.model or s.llm_provider)
+        judge_model = models.resolve(args.judge_model) if args.judge_model else models.catalogue.roles["judge"]
+    except (CatalogueError, LLMError) as e:
         print(e)
         return 1
     answerer = Answerer(conn, retriever, models, not_found_score=s.not_found_score,
-                        provider=args.provider or s.llm_provider, compare=not args.no_compare,
+                        provider=answer_model, compare=not args.no_compare,
                         refusal_retry=s.refusal_retry and not args.no_refusal_retry)
-    judge = None if args.no_judge else models.for_role("judge")
+    judge = None if args.no_judge else (models.provider(judge_model) if args.judge_model
+                                        else models.for_role("judge"))
 
     def answer_fn(question: str):
         """Answer one golden question with full access and no release filter."""
@@ -252,7 +255,8 @@ def eval_answers_command(args) -> int:
           f"judge {m['judge_ms_p50'] / 1000:.1f} s)")
 
     report["config"] = {
-        "llm_model": s.llm_model, "provider": args.provider or s.llm_provider, "temperature": s.llm_temperature,
+        "llm_model": s.llm_model, "answer_model": answer_model, "judge_model": None if args.no_judge else judge_model,
+        "temperature": s.llm_temperature,
         "models": models.describe(),
         "rerank_top": s.rerank_top, "not_found_score": s.not_found_score, "judge": not args.no_judge,
         "compare": not args.no_compare,

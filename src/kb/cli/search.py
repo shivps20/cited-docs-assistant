@@ -99,11 +99,13 @@ def ask_command(args) -> int:
     retriever = Retriever(conn, get_client(), s.qdrant_collection, embedder, reranker)
     try:
         models = ModelRegistry.load()
-    except CatalogueError as e:
+        if args.model:
+            models.resolve(args.model)              # unknown name → message with the configured models
+    except (CatalogueError, LLMError) as e:
         print(e)
         return 1
     answerer = Answerer(conn, retriever, models, not_found_score=s.not_found_score,
-                        provider=args.provider or s.llm_provider, compare=not args.no_compare,
+                        provider=args.model or s.llm_provider, compare=not args.no_compare,
                         refusal_retry=s.refusal_retry and not args.no_refusal_retry)
     rerank_top = s.rerank_top if args.rerank_top is None else (args.rerank_top or None)
     request = SearchRequest(args.query, groups=_parse_groups(args.groups), release=release, mode=args.mode,

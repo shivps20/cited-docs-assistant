@@ -110,6 +110,8 @@ sup.cite { color: var(--accent); cursor: pointer; font-weight: 600; padding: 0 1
   <h1>Knowledge-Base Assistant</h1>
   <span class="health" id="health" title="Checking…"><span class="dot"></span><span id="healthText">checking</span></span>
   <span class="spacer"></span>
+  <label for="model">Model</label>
+  <select id="model" aria-label="Model" title="Model that writes the answers"></select>
   <label for="user">User</label>
   <select id="user" aria-label="User"></select>
 </header>
@@ -248,7 +250,7 @@ function finishCard(card, f, contextUnits) {
   const meta = [
     f.status === "answered" ? null : `not found (${f.refused_by === "gate" ? "no relevant documents" : "the documents do not contain the answer"})`,
     `retrieval ${(retrieval / 1000).toFixed(1)} s`,
-    timings.generate ? `generation ${(timings.generate / 1000).toFixed(1)} s · ${esc(f.model)}${f.tokens_per_s ? ` · ${f.tokens_per_s} tok/s` : ""}` : null,
+    timings.generate ? `generation ${(timings.generate / 1000).toFixed(1)} s · ${esc(f.model_profile || f.provider || "")} (${esc(f.model)})${f.tokens_per_s ? ` · ${f.tokens_per_s} tok/s` : ""}` : null,
     `<span title="trace id">trace ${esc((f.trace_id || "").slice(0, 8))}</span>`,
   ].filter(Boolean).join(" · ");
   card.querySelector(".rest").innerHTML = sourcesHtml(f.sources) + notices + contextHtml(contextUnits) +
@@ -269,7 +271,7 @@ async function ask() {
     retrying: "No answer found yet: trying again with the best-matching sources…" };
   try {
     const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json", "X-KB-User": state.user },
-      body: JSON.stringify({ question: q, session_id: state.sessionId }) });
+      body: JSON.stringify({ question: q, session_id: state.sessionId, model: state.model || null }) });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `${res.status} ${res.statusText}`);
     const reader = res.body.getReader(), decoder = new TextDecoder();
     let buf = "";
@@ -400,6 +402,18 @@ async function loadUsers() {
   $("user").innerHTML = data.users.map((u) => `<option value="${esc(u.user_id)}" ${u.user_id === state.user ? "selected" : ""}>${esc(u.name)}${u.groups.length ? " (" + esc(u.groups.join(", ")) + ")" : " (public only)"}</option>`).join("");
 }
 
+async function loadModels() {
+  const data = await api("/api/models");
+  let saved = null;
+  try { saved = localStorage.getItem("kb-model"); } catch (_) { /* storage unavailable */ }
+  const usable = data.models.filter((m) => m.ready);
+  state.model = usable.some((m) => m.name === saved) ? saved : data.default;
+  $("model").innerHTML = usable.map((m) => `<option value="${esc(m.name)}" ${m.name === state.model ? "selected" : ""}
+    title="${esc(m.model)}${m.location === "external" ? " (external: only sees documents cleared for external use)" : " (local)"}">${esc(m.name)}${m.location === "external" ? " ↗" : ""}${m.name === data.default ? " (default)" : ""}</option>`).join("");
+  $("model").hidden = usable.length < 2;
+  $("model").previousElementSibling.hidden = usable.length < 2;
+}
+
 async function checkHealth() {
   try {
     const h = await api("/api/health");
@@ -416,6 +430,10 @@ $("q").addEventListener("input", autoGrow);
 $("q").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } });
 $("send").onclick = ask;
 $("newBtn").onclick = newConversation;
+$("model").onchange = () => {
+  state.model = $("model").value;
+  try { localStorage.setItem("kb-model", state.model); } catch (_) { /* ignore */ }
+};
 $("user").onchange = () => {
   state.user = $("user").value;
   try { localStorage.setItem("kb-user", state.user); } catch (_) { /* ignore */ }
@@ -438,6 +456,7 @@ document.addEventListener("click", (e) => {
 (async () => {
   showEmpty(); setSticky(null);
   try { await loadUsers(); } catch (err) { $("healthText").textContent = "server unreachable"; return; }
+  loadModels().catch(() => { $("model").hidden = true; $("model").previousElementSibling.hidden = true; });
   checkHealth(); setInterval(checkHealth, 30000);
   loadSessions();
   $("q").focus();

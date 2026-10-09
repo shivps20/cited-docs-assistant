@@ -77,8 +77,8 @@ def main(argv: list[str] | None = None) -> int:
     ask.add_argument("--groups", action="append", metavar="GROUP",
                      help="user access group(s), repeatable or comma-separated (default: all)")
     ask.add_argument("--release", metavar="RELEASE", help="restrict to documents for a release, e.g. R2024x")
-    ask.add_argument("--provider", choices=["auto", "ollama", "openai"],
-                     help="LLM provider (default: KB_LLM_PROVIDER, auto)")
+    ask.add_argument("--model", metavar="NAME",
+                     help="answer model from config/models.yaml (default: the answer role; also auto / ollama / openai)")
     ask.add_argument("--mode", choices=["hybrid", "dense", "sparse"], default="hybrid")
     ask.add_argument("--no-rerank", action="store_true", help="skip the reranker (and the score gate)")
     ask.add_argument("--rerank-top", type=int,
@@ -94,8 +94,10 @@ def main(argv: list[str] | None = None) -> int:
     eval_answers.add_argument("--questions", help="comma-separated golden ids, e.g. q001,q012 (default: all)")
     eval_answers.add_argument("--types", help="comma-separated question types: lookup, howto, compare, unanswerable")
     eval_answers.add_argument("--no-judge", action="store_true", help="skip the LLM faithfulness judge (faster)")
-    eval_answers.add_argument("--provider", choices=["auto", "ollama", "openai"],
-                              help="LLM provider for the answers (default: KB_LLM_PROVIDER, auto)")
+    eval_answers.add_argument("--model", metavar="NAME",
+                              help="answer model from config/models.yaml (default: the answer role)")
+    eval_answers.add_argument("--judge-model", metavar="NAME",
+                              help="faithfulness judge model from config/models.yaml (default: the judge role)")
     eval_answers.add_argument("--no-compare", action="store_true",
                               help="answer comparisons with one search (baseline for the comparison path)")
     eval_answers.add_argument("--no-refusal-retry", action="store_true",

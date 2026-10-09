@@ -44,7 +44,8 @@ uv run kb eval                                        # all six configurations (
 | `--questions LIST` | Only these golden IDs, e.g. `q001,q012` |
 | `--types LIST` | Only these question types: `lookup`, `howto`, `compare`, `unanswerable` |
 | `--no-judge` | Skip the LLM faithfulness judge (about a third faster) |
-| `--provider` | `auto`, `ollama` or `openai` for the answers (the judge always uses Ollama) |
+| `--model NAME` | Answer model from `config/models.yaml` (default: the answer role); the report records it as `answer_model` |
+| `--judge-model NAME` | Faithfulness judge model (default: the judge role, local by default) |
 | `--no-compare` | Answer comparisons with one search (baseline for the comparison path) |
 | `--no-refusal-retry` | No second attempt after a refusal (baseline for the refusal retry, which is on by default) |
 | `--details` | Also print missing `must_include` strings and unsupported claims per question |
