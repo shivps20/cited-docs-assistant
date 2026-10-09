@@ -17,6 +17,10 @@ stream into numbered sections that match the document's own numbering, so answer
   into the body, and lines repeated on a large share of pages.
 * PPTX: one section per slide, titled by the slide title; agenda and disclaimer slides dropped.
 * Documents without a TOC (e.g. DOCX) fall back to accepting all headings.
+* Only the run of TOC pages near the start is the TOC; a table Docling labels as TOC later in the
+  document is an ordinary table. A 'Contents' heading in the front matter drops only the TOC pages.
+* A TOC that lists titles without numbers makes its matching headings top-level sections 1, 2, …
+  (TD-18: without these three rules some documents lost almost all of their text).
 
 The core (build_structure) works on plain Element objects so it can be tested without Docling.
 """
@@ -43,6 +47,12 @@ DROP_SLIDE_TITLES = {"agenda", "proprietary disclosure statement", "table of con
 # A body line repeated on at least this share of pages (and >= 3 times) is page furniture.
 REPEATED_LINE_SHARE = 0.3
 MAX_HEADING_CHARS = 150
+# The table of contents must start within the first pages (8, or 10% of a long document);
+# tables Docling labels as TOC further on are treated as ordinary tables.
+TOC_START_MAX_PAGE = 8
+TOC_START_MAX_SHARE = 0.1
+# A TOC where fewer than this share of entries carry a section number is an unnumbered TOC.
+UNNUMBERED_TOC_SHARE = 0.2
 
 _NUMBER = re.compile(r"^(\d{1,2}(?:\.\d{1,2}){0,4})\.?\s+(?=\S)")
 _LEADER = re.compile(r"(?:\s*\.){3,}|…+|\uFFFD")
@@ -398,6 +408,27 @@ class _Builder:
         self.pending_list = []
 
 
+def _front_toc(elements: list[Element], n_pages: int) -> tuple[list[Element], list[int]]:
+    """Keep only the document's real table of contents: the run of consecutive TOC pages near the start.
+
+    Docling sometimes labels an ordinary table late in a document as a TOC (e.g. on page 110 of
+    214). Taken as TOC, it made everything up to that page front matter, so no section could start
+    and the body was lost. TOC elements outside the leading run become ordinary tables again.
+    Returns the elements and the pages of the leading TOC run (empty if there is none).
+    """
+    pages = sorted({e.page for e in elements if e.kind == "toc"})
+    run: list[int] = []
+    if pages and pages[0] <= max(TOC_START_MAX_PAGE, n_pages * TOC_START_MAX_SHARE):
+        run = [pages[0]]
+        for page in pages[1:]:
+            if page - run[-1] > 2:                  # allow one page without a TOC table in between
+                break
+            run.append(page)
+    keep = set(run)
+    return [e if e.kind != "toc" or e.page in keep else Element("table", e.text, e.page, e.depth, e.rows)
+            for e in elements], run
+
+
 def _drop_sections(sections: list[Section], titles: set[str]) -> list[Section]:
     """Remove sections with one of the given titles (TOC, Document History) and all their sub-sections."""
     doomed = {s.number for s in sections if normalize_title(s.title) in titles}
@@ -419,9 +450,12 @@ def build_structure(elements: list[Element], *, doc_type: str, n_pages: int,
     if doc_type == "pptx":
         return _build_slides(elements, removed)
 
+    elements, toc_pages = _front_toc(elements, n_pages)
     toc = parse_toc([toc_row_text(row) for e in elements if e.kind == "toc" for row in (e.rows or [])])
     # Everything up to and including the TOC page(s) is front matter (cover, executive summary).
-    front_last_page = max((e.page for e in elements if e.kind == "toc"), default=0)
+    front_last_page = max(toc_pages, default=0)
+    # A TOC that lists titles without section numbers: its headings become top-level sections 1, 2, …
+    unnumbered_toc = bool(toc) and sum(1 for t in toc if t.number) < UNNUMBERED_TOC_SHARE * len(toc)
     b = _Builder()
     front = b.start("0", "Front Matter", 1)
     last_numbered: tuple[int, ...] | None = None   # last explicitly numbered section
@@ -430,6 +464,7 @@ def build_structure(elements: list[Element], *, doc_type: str, n_pages: int,
     matched: set[int] = set()
     demoted: list[str] = []
     dropping = False                                # inside a dropped section (TOC, Document History)
+    dropping_front = False                          # ... started by a heading in the front matter
 
     toc_by_number = {t.number: t for t in toc if t.number}
     last_chapter = max((int(n) for n in toc_by_number if n.isdigit()), default=None)
@@ -458,7 +493,7 @@ def build_structure(elements: list[Element], *, doc_type: str, n_pages: int,
         if last_numbered is not None:
             child_count += 1
             return ".".join(map(str, last_numbered + (child_count,)))
-        if not toc:
+        if not toc or unnumbered_toc:
             top_count += 1
             return str(top_count)
         return None
@@ -467,6 +502,10 @@ def build_structure(elements: list[Element], *, doc_type: str, n_pages: int,
         if e.kind == "toc":
             continue
         in_front = e.page <= front_last_page
+        if dropping and dropping_front and not in_front:
+            # A 'Contents' heading in the front matter only covers the TOC pages; otherwise, when no
+            # numbered or TOC-matched heading starts a section afterwards, the whole body was lost.
+            dropping = dropping_front = False
         new_number = title = None
         remainder: Element | None = None            # paragraph text after a merged-in heading
 
@@ -475,6 +514,7 @@ def build_structure(elements: list[Element], *, doc_type: str, n_pages: int,
             key = normalize_title(e.text)
             if e.kind == "heading" and key in DROP_SECTION_TITLES:
                 dropping = True                     # skip everything until the next section starts
+                dropping_front = in_front
                 continue
             # Headings match the TOC fuzzily; other items only on an exact or near-exact title
             # (headings Docling labelled as text, list items or code).
@@ -506,7 +546,7 @@ def build_structure(elements: list[Element], *, doc_type: str, n_pages: int,
                         # the 'longer heading' is the title with its first paragraph merged in
                         title = split_number(prefix[1])[1]
                         remainder = Element("text", prefix[2], e.page)
-            if borrow and not number and hit.number:
+            if borrow and not number and hit.number and not unnumbered_toc:
                 number = hit.number  # heading lost its number in parsing; the TOC still has it
 
             if in_front:

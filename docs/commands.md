@@ -80,6 +80,8 @@ uv run kb parse                                       # all new or changed docum
 uv run kb parse --doc sso-setup --force
 ```
 
+Parsing typically takes 0.1–0.5 s per page on the GPU (a 214-page guide in about 30 s). Long batches (`parse`, `chunk`, `index`, `coverage`, `eval`, `eval-answers`) keep Windows awake while they run; keep a laptop plugged in with the lid open, because Modern Standby otherwise slows the process down heavily and then sleeps. `kb parse` prints a WARN for any document that took over 2 minutes while using under a tenth of that in CPU time (the machine was asleep or throttled); re-parse such a document with `--doc DOC_ID --force` to record its real time.
+
 ### `kb status`
 
 Status per document (parsed / chunked / indexed), parse statistics (pages, seconds, headings, tables, pictures, empty pages) and chunk counts. No options.

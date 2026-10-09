@@ -333,3 +333,39 @@ def test_numbered_heading_with_garbled_or_missing_toc_entry_is_kept():
 def test_table_markdown_escapes_pipes():
     assert table_markdown([["a|b", "c"], ["1", "2"]]) == "| a\\|b | c |\n| --- | --- |\n| 1 | 2 |"
     assert table_markdown([]) == ""
+
+
+def toc(page, *rows):
+    return E("toc", page=page, rows=[[r] for r in rows])
+
+
+def test_table_mislabelled_as_toc_late_in_the_document_is_a_table():
+    elements = [E("heading", "Executive Summary", 1), E("text", "Summary text.", 1),
+                E("heading", "Contents", 2), toc(2, "1. Introduction ..... 3", "2. Installation ..... 5"),
+                E("heading", "1. Introduction", 3), E("text", "Intro text.", 3),
+                E("heading", "2. Installation", 5), E("text", "Install text.", 5),
+                toc(40, "Port | 443", "Host | acme")]          # an ordinary table Docling called a TOC
+    st = build_structure(elements, doc_type="pdf", n_pages=60)
+    assert [s.number for s in st.sections] == ["0", "1", "2"]
+    assert st.get("2").blocks[-1].kind == "table"             # kept, as a table of section 2
+    assert st.unmatched_toc == []
+
+
+def test_contents_heading_in_front_matter_does_not_drop_the_body():
+    elements = [E("heading", "Contents", 2), toc(2, "Overview ..... 3"),
+                E("text", "Body text on page 3.", 3), E("text", "More body text.", 4)]
+    st = build_structure(elements, doc_type="pdf", n_pages=4)
+    assert [b.text for s in st.sections for b in s.blocks] == ["Body text on page 3.", "More body text."]
+
+
+def test_unnumbered_toc_headings_become_top_level_sections():
+    elements = [E("heading", "Contents", 2), toc(2, "Introduction ..... 3", "Pre-requisites ..... 4",
+                                                 "Installation ..... 5"),
+                E("heading", "Introduction", 3), E("text", "Intro.", 3),
+                E("heading", "Pre-requisites", 4), E("text", "Java 17.", 4),
+                E("heading", "Note:", 4), E("text", "A note.", 4),     # not in the TOC: stays text
+                E("heading", "Installation", 5), E("text", "Run setup.", 5)]
+    st = build_structure(elements, doc_type="pdf", n_pages=5)
+    assert [(s.number, s.title, s.level) for s in st.sections] == [
+        ("1", "Introduction", 1), ("2", "Pre-requisites", 1), ("3", "Installation", 1)]
+    assert [b.text for b in st.get("2").blocks] == ["Java 17.", "Note:", "A note."]

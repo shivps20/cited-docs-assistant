@@ -61,6 +61,6 @@ One line per question as it runs, then a summary; the full report (answers, raw 
 ```bash
 uv run kb eval-answers --questions q012,q043 --details     # quick check (~1 min)
 uv run kb eval-answers --types unanswerable                # refusals only
-uv run kb eval-answers --no-judge                          # all 45, without the judge (~20 min)
-uv run kb eval-answers                                     # all 45 with the judge (~25-30 min)
+uv run kb eval-answers --no-judge                          # whole set, without the judge (~10 s per question)
+uv run kb eval-answers                                     # whole set with the judge (~25-30 s per question)
 ```

@@ -7,7 +7,9 @@ comparison path (`kb.agent.compare`), which searches once per side.
 Word rules, no LLM call. A question is a comparison when it:
 * uses comparison wording: compare / comparison, vs / versus, differ, difference(s) between;
 * names two or more different releases (R2024x and R2026x);
-* asks for a choice: "Should …, X or Y?", "Is it better to …, X or Y?", "Which is better …".
+* asks for a choice: "Should …, X or Y?", "Is it better to …, X or Y?", "Which is better …";
+* names two documents (TD-22): "the Apache and the F5 load balancing guides", "the two Launcher
+  documents", "…, while the single-port guide uses …".
 
 "different" alone is not comparison wording ("What are the different components …?" asks for a list).
 Cross-document questions without comparison wording stay on the normal path.
@@ -26,6 +28,12 @@ _COMPARISON_WORDS = re.compile(
     r"|\bdifferences?\s+(?:between|from|in)\b", re.IGNORECASE)
 _CHOICE = re.compile(r"^\s*(?:should|would|is\s+it\s+better|which\s+is\s+better|which\s+one)\b.*\bor\b",
                      re.IGNORECASE)
+_DOC = r"(?:guides?|documents?|checklists?|white\s?papers?|presentations?|best\s+practices)"
+_TWO_DOCUMENTS = re.compile(
+    rf"\bthe\s+[\w-]+(?:\s+[\w-]+){{0,4}}\s+and\s+the\s+(?:[\w-]+\s+){{0,4}}{_DOC}\b"   # the X (guide) and the Y guide
+    rf"|\b(?:two|both)\s+(?:[\w-]+\s+){{0,3}}{_DOC}\b"                                # the two Launcher documents
+    rf"|\bwhile\s+the\s+(?:[\w-]+\s+){{0,3}}{_DOC}\b",                                # X recommends …, while the Y guide …
+    re.IGNORECASE)
 
 
 @dataclass
@@ -46,4 +54,6 @@ def route_question(question: str) -> Route:
         return Route(COMPARE, "two releases: " + ", ".join(f"R{y}x" for y in years))
     if _CHOICE.search(question):
         return Route(COMPARE, "choice between options")
+    if _TWO_DOCUMENTS.search(question):
+        return Route(COMPARE, "two documents named")
     return Route(ANSWER, "no comparison wording")

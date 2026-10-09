@@ -26,6 +26,7 @@ from kb.retrieve.search import Candidate
 
 MAX_SIDES = 3
 MAX_QUERY_WORDS = 40
+MIN_QUERY_WORDS = 2            # after removing the other sides' labels
 MAX_LABEL_WORDS = 10
 
 DECOMPOSE_SYSTEM = """You prepare a document search for a question that compares two or more items. \
@@ -73,9 +74,29 @@ def decompose_messages(question: str) -> list[dict]:
     return [{"role": "system", "content": DECOMPOSE_SYSTEM}, {"role": "user", "content": f"Question: {question}"}]
 
 
+_CONNECTOR = r"(?:and|or|vs\.?|versus|than)"
+_DANGLING = re.compile(r"\s*\b(?:and|or|vs\.?|versus|than|between|from|with|the)\s*(?=[?.,;]|$)", re.IGNORECASE)
+
+
+def without_labels(query: str, labels: list[str]) -> str:
+    """The query with the other sides' labels removed, plus connectors left dangling by that
+    ('… differ between MSSQL and ?' → '… differ between MSSQL?')."""
+    for label in labels:   # the label with a connector on either side: '… and Oracle', 'R2019x and …'
+        query = re.sub(rf"(?:\b{_CONNECTOR}\s+)?(?<!\w){re.escape(label)}(?!\w)(?:\s+{_CONNECTOR}\b)?",
+                       " ", query, flags=re.IGNORECASE)
+    query = re.sub(r"\s+", " ", query).strip()
+    while (cleaned := _DANGLING.sub("", query)) != query:
+        query = cleaned
+    return re.sub(r"\s+([?.,;])", r"\1", query).strip()
+
+
 def parse_sides(text: str) -> list[Side]:
-    """The sides from the LLM's JSON reply; [] when the reply is not 2-3 usable, distinct sides, or a
-    side's question still names another side (the comparison was not really split)."""
+    """The sides from the LLM's JSON reply; [] when the reply is not 2-3 usable, distinct sides.
+
+    A side whose question still names another side ('What does R2021x cover that R2019x does not?')
+    is kept with the other labels removed, so its search and its release filter are about its own
+    item only (TD-22); it is dropped only when too little of the question remains or two sides end
+    up with the same question."""
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
@@ -91,12 +112,13 @@ def parse_sides(text: str) -> list[Side]:
         if not label or not query or len(query.split()) > MAX_QUERY_WORDS or len(label.split()) > MAX_LABEL_WORDS:
             return []
         sides.append(Side(label, query))
-    if not 2 <= len(sides) <= MAX_SIDES or len({s.query.lower() for s in sides}) < len(sides):
+    if not 2 <= len(sides) <= MAX_SIDES:
         return []
-    for side in sides:
-        others = [o.label.lower() for o in sides if o is not side]
-        if any(re.search(rf"\b{re.escape(label)}\b", side.query.lower()) for label in others):
-            return []
+    labels = [s.label for s in sides]
+    sides = [Side(s.label, without_labels(s.query, [x for x in labels if x.lower() != s.label.lower()]))
+             for s in sides]
+    if any(len(s.query.split()) < MIN_QUERY_WORDS for s in sides) or len({s.query.lower() for s in sides}) < len(sides):
+        return []
     return sides
 
 

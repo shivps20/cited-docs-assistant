@@ -2,7 +2,14 @@ import json
 
 import pytest
 
-from kb.agent.compare import Side, decompose, parse_sides, retrieve_sides, side_release
+from kb.agent.compare import (
+    Side,
+    decompose,
+    parse_sides,
+    retrieve_sides,
+    side_release,
+    without_labels,
+)
 from kb.agent.route import route_question
 from kb.agent.tools import KBTools
 from kb.answer.pipeline import Answerer
@@ -23,6 +30,12 @@ from kb.retrieve.search import Candidate
     ("Compare the MSSQL vs Oracle setup", "compare"),
     ("Is the indexing server still needed in R2024x and in R2026x?", "compare"),           # two releases
     ("Should services use a single FQDN or one FQDN per service?", "compare"),             # a choice
+    ("Do the Apache and the F5 load balancing guides use the same health checks?", "compare"),  # two documents
+    ("How do the database locks guide and the performance checklist recommend it?", "compare"),
+    ("Do the two Launcher documents agree on the ports?", "compare"),
+    ("The best practices recommend virtual hosts, while the single-port guide uses one. Why?", "compare"),
+    ("Which ports do the 3DSpace and the 3DPassport services use in the installation guide?", "answer"),
+    ("Is the same port used for 3DSpace and 3DPassport?", "answer"),
     ("What are the different components for installation?", "answer"),                    # 'different' = list
     ("What delta between ClientBeginRequest and ClientDoneRequest indicates a problem?", "answer"),
     ("Which port does CoreServer use on R2026x?", "answer"),
@@ -41,9 +54,22 @@ def test_parse_sides_accepts_two_or_three_distinct_sides_only():
     assert parse_sides('{"sides": [{"label": "Oracle", "query": "q"}]}') == []                      # one side
     assert parse_sides('{"sides": [{"label": "A", "query": "same"}, {"label": "B", "query": "Same"}]}') == []
     assert parse_sides('{"sides": [{"label": "A", "query": "' + "word " * 50 + '"}, {"label": "B", "query": "q"}]}') == []
-    not_split = '{"sides": [{"label": "MSSQL", "query": "How does it differ between MSSQL and Oracle?"},' \
-                ' {"label": "Oracle", "query": "How is it done on Oracle?"}]}'
-    assert parse_sides(not_split) == []                         # a side still names the other side
+
+
+
+def test_parse_sides_removes_other_sides_labels_from_a_query():
+    named = '{"sides": [{"label": "R2021x", "query": "What does the R2021x guide cover that the R2019x guide does not?"},' \
+            ' {"label": "R2019x", "query": "What does the R2019x guide cover that the R2021x guide does not?"}]}'
+    sides = parse_sides(named)
+    assert [s.query for s in sides] == ["What does the R2021x guide cover that the guide does not?",
+                                        "What does the R2019x guide cover that the guide does not?"]
+    question = "What does the R2021x guide cover that the R2019x guide does not?"
+    assert [side_release(question, s, None) for s in sides] == [2021, 2019]         # one release per side again
+    assert without_labels("How does it differ between MSSQL and Oracle?", ["Oracle"]) == \
+        "How does it differ between MSSQL?"
+    assert without_labels("Timeouts in 2020 (V4.0) and R2021x?", ["2020 (V4.0)"]) == "Timeouts in R2021x?"
+    nothing_left = '{"sides": [{"label": "Oracle", "query": "Oracle vs MSSQL"}, {"label": "MSSQL", "query": "MSSQL vs Oracle"}]}'
+    assert parse_sides(nothing_left) == []                      # only the labels were asked: not split
 
 
 class FakePlanner:

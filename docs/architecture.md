@@ -53,10 +53,10 @@ uv run kb ask "..." --groups internal --release R2025x --show-context
 3. **Provider:** Ollama (`LLM_MODEL`) by default. With `OPENAI_API_KEY` and `OPENAI_MODEL` set, `KB_LLM_PROVIDER=auto` uses OpenAI only when **every** source has `external_ok = true`; otherwise it answers locally and says why. If OpenAI fails, it falls back to Ollama.
 4. **Citations:** `[n]` markers that do not match a source are removed; the **Sources** list under the answer is built from the cited numbers, never written by the LLM.
 
-**Comparisons** ("How does X differ between A and B?", "A versus B", two releases, "Should …, X or Y?") take a different retrieval step, because one search tends to fill the context with the side that matches the wording best:
+**Comparisons** ("How does X differ between A and B?", "A versus B", two releases, "Should …, X or Y?", two documents named: "Do the Apache and the F5 guides …?") take a different retrieval step, because one search tends to fill the context with the side that matches the wording best:
 
 1. **Route:** word rules mark the question as a comparison (no LLM call). "different" alone does not count ("What are the different components …?" asks for a list).
-2. **Split:** the local LLM turns it into one search question per side (2–3 sides, JSON), e.g. "certificates for SAML on Cloud" and "certificates for HTTPS on premises" (~2–4 s). A reply that does not really split the question falls back to one search.
+2. **Split:** the local LLM turns it into one search question per side (2–3 sides, JSON), e.g. "certificates for SAML on Cloud" and "certificates for HTTPS on premises" (~2–4 s). When a side's question still names another side, those names are removed from it, so it searches for its own item only; a reply that does not really split the question falls back to one search.
 3. **Search per side:** each side is searched with the user's groups; when the question names two releases, each side is filtered to its own release.
 4. **Merge:** up to 3 sections per side, taken in turns, within 4,000 tokens; each source is labelled with the side it was found for, and the prompt asks for each side, then the differences, and to say when the sources disagree.
 
