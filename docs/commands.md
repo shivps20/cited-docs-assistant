@@ -80,6 +80,8 @@ uv run kb parse                                       # all new or changed docum
 uv run kb parse --doc sso-setup --force
 ```
 
+Parsing typically takes 0.1–0.5 s per page on the GPU (a 214-page guide in about 30 s). Long batches (`parse`, `chunk`, `index`, `coverage`, `eval`, `eval-answers`) keep Windows awake while they run; keep a laptop plugged in with the lid open, because Modern Standby otherwise slows the process down heavily and then sleeps. `kb parse` prints a WARN for any document that took over 2 minutes while using under a tenth of that in CPU time (the machine was asleep or throttled); re-parse such a document with `--doc DOC_ID --force` to record its real time.
+
 ### `kb status`
 
 Status per document (parsed / chunked / indexed), parse statistics (pages, seconds, headings, tables, pictures, empty pages) and chunk counts. No options.
@@ -176,8 +178,10 @@ uv run kb search "..." --rerank-top 0 --min-score 0.3                           
 | `--rerank-top N` | `KB_RERANK_TOP` (20) | Rerank only the first N candidates; `0` = all |
 | `--show-context` | | Print the context sent to the LLM before the answer |
 | `--no-stream` | | Print the answer only when it is complete |
+| `--no-compare` | | Answer comparison questions with one search instead of one search per side |
+| `--no-refusal-retry` | `KB_REFUSAL_RETRY` (on) | No second attempt with the best-matching sources when the model finds no answer |
 
-After the answer it prints the sources, any notes (removed citations, provider choice), the status (`answered`, or `not found` by the gate or by the LLM), timings and the trace ID.
+After the answer it prints the sources, any notes (removed citations, provider choice, a comparison answered with one search, an answer found on the second attempt), the status (`answered`, or `not found` by the gate or by the LLM), timings and the trace ID.
 
 ```bash
 uv run kb ask "How do I enable single sign-on?"
@@ -185,6 +189,7 @@ uv run kb ask "Which port does the application server use?" --show-context      
 uv run kb ask "Which tool captures traffic for a performance analysis?" --groups internal   # restricted document
 uv run kb ask "Which SQL Server version is supported?" --release R2026x
 uv run kb ask "How do I configure NGINX as a reverse proxy?"                   # expect "not found"
+uv run kb ask "How does the database setup differ between MSSQL and Oracle?"   # comparison: one search per side
 uv run kb ask "..." --provider openai                                        # needs OPENAI_API_KEY + OPENAI_MODEL
 ```
 

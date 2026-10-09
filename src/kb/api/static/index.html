@@ -239,6 +239,7 @@ function finishCard(card, f, contextUnits) {
   const bits = [];
   if (f.standalone_query) bits.push(`Interpreted as: <b>${esc(f.standalone_query)}</b>`);
   if (f.release) bits.push(`Release: <b>${esc(f.release)}</b>${f.release_reason === "sticky" ? " (kept from the conversation)" : ""}`);
+  if ((f.sides || []).length) bits.push(`Compared: <b>${f.sides.map(esc).join("</b> vs <b>")}</b> (one search each)`);
   if (bits.length) { interp.innerHTML = bits.join(" · "); interp.hidden = false; }
   card.querySelector(".answer").innerHTML = renderMarkdown(f.answer);
   const notices = (f.notices || []).map((n) => `<div class="notice">${esc(n)}</div>`).join("");
@@ -264,7 +265,8 @@ async function ask() {
   const card = addAssistantCard();
   const st = card.querySelector(".st"), stream = card.querySelector(".stream");
   let context = [], finished = false;
-  const stages = { queued: "Waiting for another question to finish…", condensing: "Understanding your follow-up…", searching: "Searching the documents…" };
+  const stages = { queued: "Waiting for another question to finish…", condensing: "Understanding your follow-up…", searching: "Searching the documents…", comparing: "Splitting the comparison into its sides…",
+    retrying: "No answer found yet: trying again with the best-matching sources…" };
   try {
     const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json", "X-KB-User": state.user },
       body: JSON.stringify({ question: q, session_id: state.sessionId }) });
@@ -286,7 +288,9 @@ async function ask() {
         const d = data ? JSON.parse(data) : {};
         if (event === "session") { state.sessionId = d.session_id; setSticky(d.sticky_release); }
         else if (event === "status") {
-          st.textContent = d.stage === "searching" && d.release ? `Searching the documents (${d.release})…` : (stages[d.stage] || d.stage);
+          st.textContent = d.stage === "searching_side" ? `Searching for ${d.side} (${d.index} of ${d.total})…`
+            : d.stage === "reading" ? `Reading ${d.sections.length} more section${d.sections.length === 1 ? "" : "s"}…`
+            : d.stage === "searching" && d.release ? `Searching the documents (${d.release})…` : (stages[d.stage] || d.stage);
           if (d.standalone_query) { const i = card.querySelector(".interp"); i.innerHTML = `Interpreted as: <b>${esc(d.standalone_query)}</b>`; i.hidden = false; }
           if ("sticky_release" in d) setSticky(d.sticky_release);
         }

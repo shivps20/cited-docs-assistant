@@ -96,7 +96,9 @@ def ask_command(args) -> int:
     conn = connect()
     retriever = Retriever(conn, get_client(), s.qdrant_collection, embedder, reranker)
     answerer = Answerer(conn, retriever, build_providers(s), not_found_score=s.not_found_score,
-                        provider=args.provider or s.llm_provider)
+                        provider=args.provider or s.llm_provider, compare=not args.no_compare,
+                        refusal_retry=s.refusal_retry and not args.no_refusal_retry)
+    # compare_read=s.compare_read or args.compare_read  — read step disabled (TO-5.10)
     rerank_top = s.rerank_top if args.rerank_top is None else (args.rerank_top or None)
     request = SearchRequest(args.query, groups=_parse_groups(args.groups), release=release, mode=args.mode,
                             rerank=not args.no_rerank, rerank_top=rerank_top, user_id="cli")
@@ -144,6 +146,8 @@ def ask_command(args) -> int:
     retrieval_ms = sum(t.get(k, 0) for k in ("embed", "search", "rerank", "assemble"))
     status = answer.status if answer.status == "answered" else f"not found (by {answer.refused_by})"
     print(f"\nstatus: {status}   gate: {answer.gate.explain()}")
+    if answer.sides:
+        print(f"compared: {' | '.join(answer.sides)} (one search per side)")
     line = f"retrieval {retrieval_ms / 1000:.1f} s (rerank {t.get('rerank', 0) / 1000:.1f} s)"
     g = answer.generation
     if g:

@@ -1,14 +1,26 @@
-"""Answer pipeline: retrieve -> gate -> prompt -> LLM -> check citations, in one trace.
+"""Answer pipeline: route -> retrieve -> gate -> prompt -> LLM -> check citations, in one trace.
 
     answerer = Answerer(conn, retriever, build_providers(settings), not_found_score=0.1)
     answer = answerer.answer(SearchRequest("How do I ...?"), on_token=print)
     print(answer.formatted())
+
+Comparison questions (kb.agent.route) are split into sides by the local LLM and searched once per
+side (kb.agent.compare), so every side reaches the context; everything after retrieval is shared.
 """
 
 import sqlite3
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
+from kb.agent.compare import (
+    Decomposition,
+    decompose,
+    plan_reads,
+    read_sections,
+    retrieve_sides,
+)
+from kb.agent.route import ANSWER, COMPARE, Route, route_question
+from kb.agent.tools import KBTools
 from kb.core.tracing import Tracer
 from kb.llm.prompts import (
     NOT_FOUND,
@@ -34,6 +46,8 @@ from kb.retrieve.search import Candidate
 
 ANSWERED = "answered"
 NOT_FOUND_STATUS = "not_found"
+RETRY_UNITS = 3            # refusal retry: the best units of a normal question
+RETRY_UNITS_PER_SIDE = 2   # ... and of each side of a comparison
 
 
 @dataclass
@@ -69,6 +83,10 @@ class Answer:
     invalid_citations: list[int] = field(default_factory=list)
     notices: list[str] = field(default_factory=list)
     references: list[str] = field(default_factory=list)  # article numbers / URLs added from cited sources
+    route: str = ANSWER                     # answer | compare (the path that produced the answer)
+    sides: list[str] = field(default_factory=list)       # comparisons: the items compared
+    retried_from: int = 0                   # units of the first attempt, when a refusal was retried
+    read_sections: int = 0                  # sections added by the comparison read step
 
     @property
     def refused_by(self) -> str | None:
@@ -85,6 +103,20 @@ class Answer:
         return "\n".join(lines)
 
 
+def retry_context(context: Sequence[ContextUnit], sides: Sequence[str]) -> list[ContextUnit]:
+    """The smaller context for a second attempt after a refusal: the first RETRY_UNITS units (the
+    context is in rerank order), or for a comparison the first RETRY_UNITS_PER_SIDE units of each side."""
+    if not sides:
+        return list(context[:RETRY_UNITS])
+    taken: dict[str, int] = {}
+    smaller = []
+    for unit in context:
+        if taken.get(unit.side, 0) < RETRY_UNITS_PER_SIDE:
+            taken[unit.side] = taken.get(unit.side, 0) + 1
+            smaller.append(unit)
+    return smaller
+
+
 def _source(n: int, unit: ContextUnit) -> Source:
     """Source entry for context unit `unit`, cited as [n]."""
     return Source(n=n, doc_id=unit.doc_id, title=unit.title, release=unit.release, section=unit.section_number,
@@ -99,35 +131,63 @@ class Answerer:
     """Answers questions: retrieval, confidence gate, LLM generation and citation checking, in one trace."""
 
     def __init__(self, conn: sqlite3.Connection, retriever: Retriever, providers: Mapping[str, LLMProvider], *,
-                 not_found_score: float = 0.1, provider: str = "auto"):
+                 not_found_score: float = 0.1, provider: str = "auto", compare: bool = True,
+                 planner: LLMProvider | None = None, refusal_retry: bool = False):
+        # Read step disabled (TO-5.10, TD-14): with qwen2.5 7B it did not improve answers; re-enable with a larger model.
+        # To re-enable, add the parameter back:  compare_read: bool = False
         """Keep the retriever and the available LLM providers (by name).
 
         not_found_score: gate threshold on the top rerank score.
         provider: default provider choice ('auto', 'ollama' or 'openai').
+        compare: route comparison questions to the comparison path (False: one search for every question).
+        planner: local model that splits comparisons into sides (default: the Ollama answer provider).
+        refusal_retry: when the LLM refuses, ask once more with only the best-matching units (TD-23).
+        (compare_read, disabled: after a comparison's per-side searches, let the local LLM pick more
+            sections of each side's guide from its table of contents; see _read_more.)
         """
         self.conn = conn
         self.retriever = retriever
         self.providers = providers
         self.not_found_score = not_found_score
         self.provider = provider
+        self.compare = compare
+        self.planner = planner if planner is not None else providers.get(OLLAMA)
+        self.refusal_retry = refusal_retry
+        # self.compare_read = compare_read      # read step disabled (TO-5.10)
 
     def answer(self, req: SearchRequest, *, provider: str | None = None,
                on_token: Callable[[str], None] | None = None,
                on_context: Callable[[list[ContextUnit]], None] | None = None,
-               asked: str | None = None, pre_stages: Sequence[tuple[str, float, dict]] = ()) -> Answer:
-        """on_token receives the answer as it streams; on_context the context, before generation.
+               asked: str | None = None, pre_stages: Sequence[tuple[str, float, dict]] = (),
+               on_status: Callable[[str, dict], None] | None = None) -> Answer:
+        """on_token receives the answer as it streams; on_context the context, before generation;
+        on_status(stage, data) the comparison progress: 'comparing' before the question is split,
+        then 'searching_side' {side, index, total} before each side's search, 'reading' {sections}
+        when the read step adds sections; 'retrying' {units}
+        when a refusal is asked again with fewer sources (on_context then gets the smaller context).
 
         req.query is what is searched and answered. asked: the user's own words when req.query is a
         condensed follow-up (the trace keeps both). pre_stages: (name, ms, data) of stages timed before
         the trace started, recorded first (e.g. condensing).
         """
         with Tracer(self.conn, asked or req.query, user_id=req.user_id, session_id=req.session_id) as trace:
-            trace.set(route="answer")
             if asked and asked != req.query:
                 trace.set(standalone_query=req.query)
             for name, ms, data in pre_stages:
                 trace.add_stage(name, ms, **data)
-            result = self.retriever.retrieve(req, trace)
+            route, plan = self._route(req.query, trace, on_status)
+            side_docs: dict[str, str] = {}
+            tools = KBTools(self.conn, self.retriever, req, trace)
+            if plan is not None and plan.sides:
+                total = len(plan.sides)
+                on_side = (lambda i, side: on_status("searching_side", {"side": side.label, "index": i, "total": total})
+                           ) if on_status else None
+                result = retrieve_sides(tools, req.query, plan.sides, on_side=on_side, side_docs=side_docs)
+                trace.set(top_rerank_score=result.candidates[0].rerank_score if result.candidates else None)
+            else:
+                result = self.retriever.retrieve(req, trace)
+            sides = [s.label for s in plan.sides] if plan is not None else []
+            trace.set(route=COMPARE if sides else ANSWER)
 
             with trace.stage("gate", threshold=self.not_found_score) as stage:
                 decision = gate(result, self.not_found_score)
@@ -136,14 +196,86 @@ class Answerer:
 
             answer = Answer(question=req.query, text=NOT_FOUND, status=NOT_FOUND_STATUS, gate=decision,
                             sources=[], context=result.context, candidates=result.candidates,
-                            trace_id=trace.trace_id, timings_ms={})
+                            trace_id=trace.trace_id, timings_ms={}, route=COMPARE if sides else ANSWER,
+                            sides=sides)
+            if route.kind == COMPARE and not sides:
+                answer.notices.append(f"Comparison answered with one search ({plan.reason if plan else route.reason}).")
+            # Read step disabled (TO-5.10, TD-14): with qwen2.5 7B it did not improve answers; re-enable with a larger model.
+            # if sides and self.compare_read and decision.passed:
+            #     self._read_more(answer, tools, side_docs, trace, on_status)
             if on_context:
                 on_context(result.context)
             if decision.passed:
                 self._generate(answer, trace, provider or self.provider, on_token)
+                if self.refusal_retry and answer.status == NOT_FOUND_STATUS:
+                    self._retry_smaller(answer, trace, provider or self.provider, on_token, on_context, on_status)
             trace.set(answer=answer.text, sources=[s.__dict__ for s in answer.sources])
         answer.timings_ms = stage_timings(trace)
         return answer
+
+    def _route(self, question: str, trace: Tracer,
+               on_status: Callable[[str, dict], None] | None = None) -> tuple[Route, Decomposition | None]:
+        """Route the question; for a comparison, split it into sides (None when not a comparison)."""
+        with trace.stage("route") as stage:
+            route = route_question(question)
+            if route.kind == COMPARE and not self.compare:
+                route = Route(ANSWER, "comparison path switched off")
+            stage.update(route=route.kind, reason=route.reason)
+        if route.kind != COMPARE:
+            return route, None
+        if on_status:
+            on_status("comparing", {})
+        plan = decompose(self.planner, question)
+        trace.add_stage("decompose", plan.seconds * 1000, reason=plan.reason,
+                        sides=[{"label": s.label, "query": s.query} for s in plan.sides], raw_output=plan.raw)
+        return route, plan
+
+    def _read_more(self, answer: Answer, tools: KBTools, side_docs: dict[str, str], trace: Tracer,
+                   on_status: Callable[[str, dict], None] | None) -> None:
+        """The comparison read step: the local LLM picks more sections of each side's guide from its
+        table of contents; they are read (access-checked) and appended to the context.
+
+        Not called at the moment (see the commented call in answer(), TO-5.10 / TD-14): measured with
+        qwen2.5 7B it picked the section holding a missing fact once in 16 comparisons, and the extra
+        text made two answers worse. Kept for a larger model."""
+        reads = plan_reads(self.planner, tools, answer.question, answer.context, side_docs)
+        units = read_sections(tools, reads.reads)
+        trace.add_stage("read", reads.seconds * 1000, reason=reads.reason, chosen=[sid for _, sid in reads.reads],
+                        added=[[u.section_id, u.side, u.tokens] for u in units], raw_output=reads.raw)
+        if units:
+            if on_status:
+                on_status("reading", {"sections": [u.citation for u in units]})
+            answer.context = [*answer.context, *units]
+            answer.read_sections = len(units)
+
+    def _retry_smaller(self, answer: Answer, trace: Tracer, requested: str,
+                       on_token: Callable[[str], None] | None,
+                       on_context: Callable[[list[ContextUnit]], None] | None,
+                       on_status: Callable[[str, dict], None] | None) -> None:
+        """Second attempt after an LLM refusal, with only the best-matching units (TD-23).
+
+        Keeps the refusal (and the full context) when the smaller context is not smaller or the
+        model refuses again; unanswerable questions are expected to be refused twice.
+        """
+        full = answer.context
+        smaller = retry_context(full, answer.sides)
+        if not smaller or len(smaller) >= len(full):
+            return
+        trace.add_stage("retry", 0.0, units=[u.section_id for u in smaller], first_units=len(full))
+        if on_status:
+            on_status("retrying", {"units": len(smaller)})
+        if on_context:
+            on_context(smaller)
+        if on_token:
+            on_token("\n\n")
+        answer.context = smaller
+        self._generate(answer, trace, requested, on_token)
+        if answer.status == ANSWERED:
+            answer.retried_from = len(full)
+            answer.notices.append(f"Answered on a second attempt with the {len(smaller)} best-matching sources; "
+                                  f"with all {len(full)} the model found no answer.")
+        else:
+            answer.context = full
 
     def _generate(self, answer: Answer, trace: Tracer, requested: str,
                   on_token: Callable[[str], None] | None) -> None:
@@ -153,7 +285,7 @@ class Answerer:
         name, notice = select_provider(requested, answer.context, list(self.providers))
         if notice:
             answer.notices.append(notice)
-        messages = build_messages(answer.question, answer.context)
+        messages = build_messages(answer.question, answer.context, answer.sides)
 
         with trace.stage("generate", provider=name, model=self.providers[name].model,
                          prompt_chars=sum(len(m["content"]) for m in messages)) as stage:

@@ -1,9 +1,10 @@
 import json
+import re
 from types import SimpleNamespace
 
 import pytest
 
-from kb.answer.pipeline import Answerer
+from kb.answer.pipeline import Answerer, retry_context
 from kb.core.db import connect, migrate
 from kb.core.domain import Domain, use_domain
 from kb.llm.prompts import (
@@ -198,7 +199,7 @@ def test_answer_cites_sources_and_traces_everything(conn):
     assert json.loads(trace["sources"])[0]["section"] == "2.2.3"
     stages = [r["stage"] for r in conn.execute("SELECT stage FROM trace_stages WHERE trace_id = ? ORDER BY seq",
                                                (answer.trace_id,))]
-    assert stages == ["search", "gate", "generate", "cite"]
+    assert stages == ["route", "search", "gate", "generate", "cite"]
 
 
 def test_condensed_follow_up_is_traced_with_both_questions(conn):
@@ -244,6 +245,68 @@ def test_llm_refusal_is_not_found(conn):
     answerer = Answerer(conn, FakeRetriever(SearchResult([cand(0.9)], [unit()], "t", {})), {"ollama": llm})
     answer = answerer.answer(SearchRequest("NGINX config?", rerank_top=10))
     assert (answer.status, answer.refused_by, answer.sources) == ("not_found", "llm", [])
+
+
+class ScriptedLLM:
+    """Replies from a list, one per call, and records how many sources each prompt held."""
+
+    name, model = "ollama", "ollama-model"
+
+    def __init__(self, *replies):
+        """Keep the replies to give, in order."""
+        self.replies, self.source_counts = list(replies), []
+
+    def generate(self, messages, *, on_token=None):
+        """The next reply; records the number of sources in the prompt."""
+        self.source_counts.append(len(re.findall(r"^\[\d+\] ", messages[1]["content"], re.MULTILINE)))
+        return Generation(self.replies.pop(0), self.name, self.model, 1.0)
+
+
+def six_units():
+    """Six distinct context units, doc1 … doc6."""
+    return [unit(f"doc{i}", str(i), text=f"Text {i}.") for i in range(1, 7)]
+
+
+def test_refusal_is_retried_with_the_best_units_when_switched_on(conn):
+    llm = ScriptedLLM(NOT_FOUND, "Run StartTUI.exe --silent [1].")
+    statuses, contexts = [], []
+    answerer = Answerer(conn, FakeRetriever(SearchResult([cand(0.9)], six_units(), "t", {})), {"ollama": llm},
+                        refusal_retry=True)
+    answer = answerer.answer(SearchRequest("silent install?", rerank_top=10),
+                             on_status=lambda stage, data: statuses.append((stage, data)),
+                             on_context=lambda units: contexts.append(len(units)))
+    assert (answer.status, answer.retried_from, len(answer.context)) == ("answered", 6, 3)
+    assert llm.source_counts == [6, 3] and contexts == [6, 3] and statuses == [("retrying", {"units": 3})]
+    assert answer.sources[0].doc_id == "doc1" and any("second attempt" in n for n in answer.notices)
+    stages = [r["stage"] for r in conn.execute("SELECT stage FROM trace_stages WHERE trace_id = ? ORDER BY seq",
+                                               (answer.trace_id,))]
+    assert stages == ["route", "search", "gate", "generate", "cite", "retry", "generate", "cite"]
+
+
+def test_second_refusal_keeps_the_refusal_and_the_full_context(conn):
+    llm = ScriptedLLM(NOT_FOUND, NOT_FOUND)
+    answerer = Answerer(conn, FakeRetriever(SearchResult([cand(0.9)], six_units(), "t", {})), {"ollama": llm},
+                        refusal_retry=True)
+    answer = answerer.answer(SearchRequest("NGINX config?", rerank_top=10))
+    assert (answer.status, answer.refused_by, answer.retried_from, len(answer.context)) == ("not_found", "llm", 0, 6)
+
+
+def test_refusal_is_not_retried_when_off_or_when_the_context_is_already_small(conn):
+    off = ScriptedLLM(NOT_FOUND)
+    Answerer(conn, FakeRetriever(SearchResult([cand(0.9)], six_units(), "t", {})), {"ollama": off}).answer(
+        SearchRequest("q?", rerank_top=10))
+    small = ScriptedLLM(NOT_FOUND)
+    Answerer(conn, FakeRetriever(SearchResult([cand(0.9)], six_units()[:3], "t", {})), {"ollama": small},
+             refusal_retry=True).answer(SearchRequest("q?", rerank_top=10))
+    assert off.source_counts == [6] and small.source_counts == [3]
+
+
+def test_retry_context_keeps_the_best_units_of_every_side():
+    units = six_units()
+    for u, side in zip(units, ["A", "B", "A", "B", "A", "B"]):
+        u.side = side
+    assert [u.doc_id for u in retry_context(units, [])] == ["doc1", "doc2", "doc3"]
+    assert [u.doc_id for u in retry_context(units, ["A", "B"])] == ["doc1", "doc2", "doc3", "doc4"]
 
 
 def test_openai_failure_falls_back_to_ollama(conn):

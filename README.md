@@ -12,11 +12,12 @@ Everything runs on one workstation: Qdrant in Docker, bge-m3 embeddings and the 
 Ingestion (offline)                         Query (per request)
 -------------------                         -------------------
 documents + manifest                        question
-  -> Docling parse                            -> condense follow-up, route
+  -> Docling parse                            -> condense follow-up, route (comparison: one search per side)
   -> structure-aware chunks                   -> hybrid search in Qdrant (dense + sparse, RRF)
   -> metadata from manifest                   -> filters: access groups, release, latest revision
   -> bge-m3 dense + sparse                    -> rerank -> confidence gate -> assemble context
   -> Qdrant (chunks) + SQLite (sections)      -> LLM answer with [n] citations
+                                              -> "not found"? once more with the best 3 sources
 ```
 
 Every query is traced stage by stage into SQLite, and a golden question set (`eval/golden.json`, local; example in [eval/golden.example.json](eval/golden.example.json)) measures retrieval and answer quality.
@@ -112,11 +113,12 @@ src/kb/
   store/           embed (bge-m3 dense + sparse) · vectorstore (Qdrant collection)
   retrieve/        search (filters, hybrid) · rerank · assemble · pipeline · gate · release
   llm/             providers (Ollama, OpenAI) · prompts (prompt, citations) · condense (follow-ups) · judge
-  answer/          pipeline: retrieve -> gate -> LLM -> citations, in one trace
+  agent/           route (comparison?) · tools (search_kb, get_section, outline, read_section; access-checked) · compare (split, one search per side; read step disabled)
+  answer/          pipeline: route -> retrieve -> gate -> LLM -> citations (-> retry on a refusal), in one trace
   evaluation/      coverage · retrieval (kb eval) · answers (kb eval-answers)
   api/             app (FastAPI) · chat (SSE turn) · services · health · users · sessions · static/ (chat UI)
   cli/             main (entry point) · ingest · search · evaluation · serve
-tests/             mirrors src/kb (core, ingest, retrieve, answer, evaluation, api)
+tests/             mirrors src/kb (core, ingest, retrieve, agent, answer, evaluation, api)
 data/, models/     local runtime data (documents, parse cache, kb.db, reports) and models: git-ignored
 ```
 

@@ -72,6 +72,10 @@ class AnswerResult:
     raw_output: str = ""
     sources: list[str] = field(default_factory=list)
     trace_id: str = ""
+    route: str = "answer"                 # answer | compare (searched once per side)
+    sides: list[str] = field(default_factory=list)
+    retried: bool = False                 # answered on the second attempt after a refusal (TD-23)
+    read_sections: int = 0                # sections added by the comparison read step
 
 
 def normalise(text: str) -> str:
@@ -137,6 +141,8 @@ def score_answer(q: dict, answer: Answer, verdict: Verdict | None, total_ms: flo
         judge_error=verdict.error if verdict else None,
         answer=answer.text, raw_output=answer.generation.text if answer.generation else "",
         sources=[s.line for s in answer.sources], trace_id=answer.trace_id,
+        route=answer.route, sides=list(answer.sides), retried=answer.retried_from > 0,
+        read_sections=answer.read_sections,
     )
 
 
@@ -189,6 +195,7 @@ def summarize_answers(results: list[AnswerResult]) -> dict:
         "dropped_not_found": share(answered, lambda r: r.dropped_not_found),
         "meta_talk": share(answered, lambda r: r.meta_talk),
         "invalid_citations": sum(r.invalid_citations for r in answered),
+        "retried": [r.qid for r in results if r.retried],      # answered only on the second attempt
         # unanswerable questions
         "refused": share(unans, lambda r: r.status != ANSWERED),
         "wrong_answers": [r.qid for r in unans if r.status == ANSWERED],

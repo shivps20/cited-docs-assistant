@@ -45,6 +45,8 @@ uv run kb eval                                        # all six configurations (
 | `--types LIST` | Only these question types: `lookup`, `howto`, `compare`, `unanswerable` |
 | `--no-judge` | Skip the LLM faithfulness judge (about a third faster) |
 | `--provider` | `auto`, `ollama` or `openai` for the answers (the judge always uses Ollama) |
+| `--no-compare` | Answer comparisons with one search (baseline for the comparison path) |
+| `--no-refusal-retry` | No second attempt after a refusal (baseline for the refusal retry, which is on by default) |
 | `--details` | Also print missing `must_include` strings and unsupported claims per question |
 
 Runs every golden question through the full pipeline (full access, no release filter) and scores:
@@ -53,13 +55,13 @@ Runs every golden question through the full pipeline (full access, no release fi
 - **Content:** share of `must_include` strings, article numbers and URLs from the expected answer that appear in the answer.
 - **Citations:** precision (cited sources on a golden document and pages) and document recall (golden documents cited, which matters for comparisons); whether the context held a golden source at all, to separate retrieval from generation failures.
 - **Faithfulness (LLM judge):** qwen splits the answer into claims and quotes the evidence for each; a claim counts as supported only if its quote occurs word for word in the context. Same model judging its own answers: read flagged claims, don't treat 1.0 as proof.
-- **Style flags:** no `[n]` markers (M), a not-found sentence removed (N), talk about "the sources" (T).
+- **Style flags:** answered on the comparison path (C), no `[n]` markers (M), a not-found sentence removed (N), talk about "the sources" (T), answered only on the retry with fewer sources (R; the summary lists them).
 
 One line per question as it runs, then a summary; the full report (answers, raw model output, unsupported claims, settings and a prompt hash for comparing runs) goes to `data/eval/answers-<timestamp>.json`. With the judge, expect ~30–40 s per question.
 
 ```bash
 uv run kb eval-answers --questions q012,q043 --details     # quick check (~1 min)
 uv run kb eval-answers --types unanswerable                # refusals only
-uv run kb eval-answers --no-judge                          # all 45, without the judge (~20 min)
-uv run kb eval-answers                                     # all 45 with the judge (~25-30 min)
+uv run kb eval-answers --no-judge                          # whole set, without the judge (~10 s per question)
+uv run kb eval-answers                                     # whole set with the judge (~25-30 s per question)
 ```

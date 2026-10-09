@@ -19,6 +19,7 @@ class SearchRequest:
     query: str
     groups: list[str] = field(default_factory=lambda: ["all"])
     release: int | None = None               # release year, e.g. 2024 for R2024x
+    category: str | None = None              # manifest category, e.g. 'installation' (None = all)
     mode: str = "hybrid"
     rerank: bool = True
     candidates: int = 30
@@ -62,16 +63,20 @@ class Retriever:
         result.timings_ms = stage_timings(trace)
         return result
 
-    def retrieve(self, req: SearchRequest, trace: Tracer) -> SearchResult:
-        """Retrieval stages recorded into an existing trace (shared with answer generation)."""
-        release_label = f"R{req.release}x" if req.release is not None else None
-        query_filter = build_filter(req.groups, release=req.release)
+    def retrieve(self, req: SearchRequest, trace: Tracer, *, side: str | None = None) -> SearchResult:
+        """Retrieval stages recorded into an existing trace (shared with answer generation).
 
-        with trace.stage("embed"):
+        side: for comparisons, which side this search is for; recorded in every stage's data.
+        """
+        release_label = f"R{req.release}x" if req.release is not None else None
+        query_filter = build_filter(req.groups, release=req.release, category=req.category)
+        tag = {"side": side} if side else {}
+
+        with trace.stage("embed", **tag):
             query = self.embedder.embed([req.query])[0]
 
         with trace.stage("search", mode=req.mode, limit=req.candidates, groups=req.groups,
-                         release=release_label) as stage:
+                         release=release_label, category=req.category, **tag) as stage:
             candidates = search(self.client, self.collection, query, query_filter,
                                 mode=req.mode, limit=req.candidates)
             stage["hits"] = [[c.chunk_id, round(c.score, 4)] for c in candidates]
@@ -79,12 +84,12 @@ class Retriever:
         reranked = req.rerank and self.reranker is not None and bool(candidates)
         if reranked:
             with trace.stage("rerank", candidates=len(candidates), top=req.rerank_top,
-                             max_length=getattr(self.reranker, "max_length", None)) as stage:
+                             max_length=getattr(self.reranker, "max_length", None), **tag) as stage:
                 candidates = rerank(self.reranker, req.query, candidates, top=req.rerank_top)
                 stage["top"] = [[c.chunk_id, round(c.rerank_score, 4)] for c in candidates[:10]
                                 if c.rerank_score is not None]
 
-        with trace.stage("assemble", min_score=req.min_context_score) as stage:
+        with trace.stage("assemble", min_score=req.min_context_score, **tag) as stage:
             context = assemble(self.conn, candidates,
                                min_score=req.min_context_score if reranked else None)
             stage["units"] = [[u.section_id, u.kind, u.tokens] for u in context]
@@ -98,5 +103,9 @@ class Retriever:
 
 
 def stage_timings(trace: Tracer) -> dict[str, float]:
-    """Duration of each recorded stage in milliseconds, by stage name."""
-    return {s["stage"]: round(s["duration_ms"], 1) for s in trace.stages}
+    """Duration of each recorded stage in milliseconds, by stage name; a stage that ran more than once
+    (a comparison searches once per side) is the sum of its runs."""
+    timings: dict[str, float] = {}
+    for s in trace.stages:
+        timings[s["stage"]] = timings.get(s["stage"], 0.0) + s["duration_ms"]
+    return {name: round(ms, 1) for name, ms in timings.items()}

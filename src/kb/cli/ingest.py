@@ -103,7 +103,7 @@ def parse_documents(doc_ids: list[str] | None, force: bool) -> int:
     header = f"{'doc_id':<44} {'type':<5} {'pages':>5} {'sec':>7} {'s/pg':>5} {'texts':>6} {'heads':>5} " \
              f"{'tables':>6} {'pics':>5} {'empty':>5} {'furn':>5}"
     print(header, flush=True)
-    failed = 0
+    failed = stalled = 0
     for doc in docs:
         try:
             _, st, file_hash = parse_document(doc, converter, force=force)
@@ -117,8 +117,15 @@ def parse_documents(doc_ids: list[str] | None, force: bool) -> int:
         print(f"{doc.doc_id:<44} {doc.doc_type:<5} {st.pages:>5} {seconds:>7} {st.seconds_per_page:>5.2f} "
               f"{st.text_items:>6} {st.headings:>5} {st.tables:>6} {st.pictures:>5} {st.empty_pages:>5} "
               f"{st.furniture:>5}", flush=True)
+        if st.stalled:
+            stalled += 1
+            print(f"  WARN {st.seconds:.0f} s for {st.pages} pages but only {st.cpu_seconds:.0f} s of CPU: the machine "
+                  f"slept or was throttled (keep it plugged in, lid open); re-parse with --doc {doc.doc_id} --force "
+                  f"to record the real time", flush=True)
     conn.close()
     print(f"\n{len(docs) - failed} parsed, {failed} failed; cache: {s.parsed_dir}")
+    if stalled:
+        print(f"WARN {stalled} document(s) stalled: their parse times include time the machine was asleep or throttled")
     return 1 if failed else 0
 
 

@@ -15,6 +15,8 @@ All settings come from `.env` (see [.env.example](../.env.example)) through `kb.
 | `HF_HUB_OFFLINE` | `1` | Never download models at runtime |
 | `KB_RERANK_TOP` | `20` | Candidates reranked per search (see [architecture.md](architecture.md#retrieval)) |
 | `KB_NOT_FOUND_SCORE` | `0.1` | Reply "not found" without the LLM below this top rerank score (see [architecture.md](architecture.md#answering)) |
+| `KB_COMPARE_READ` | — | Disabled in code (commented out): comparisons would let the local LLM pick up to 2 more sections per side from each guide's table of contents; did not help with a 7B model |
+| `KB_REFUSAL_RETRY` | `true` | When the model replies "not found", ask once more with only the best-matching sources (3, or 2 per side of a comparison) |
 | `KB_LLM_PROVIDER` | `auto` | `auto`, `ollama` or `openai` |
 | `KB_USERS_PATH` | `config/users.yaml` | Chat API users and their access groups |
 | `KB_API_HOST`, `KB_API_PORT` | `127.0.0.1`, `8000` | Where `kb serve` listens (keep loopback: no authentication) |

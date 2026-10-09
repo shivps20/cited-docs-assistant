@@ -40,8 +40,8 @@ class Candidate:
 
 
 def build_filter(groups: list[str], *, release: int | None = None, latest_only: bool = True,
-                 external_only: bool = False) -> models.Filter:
-    """Access (user groups or public), optional release, latest revision, optional external_ok."""
+                 external_only: bool = False, category: str | None = None) -> models.Filter:
+    """Access (user groups or public), optional release, latest revision, optional external_ok and category."""
     allowed = sorted(set(groups) | {PUBLIC_GROUP})
     must: list[models.Condition] = [
         models.FieldCondition(key="allowed_groups", match=models.MatchAny(any=allowed)),
@@ -53,6 +53,8 @@ def build_filter(groups: list[str], *, release: int | None = None, latest_only: 
         must.append(models.FieldCondition(key="release_max", range=models.Range(gte=release)))
     if external_only:
         must.append(models.FieldCondition(key="external_ok", match=models.MatchValue(value=True)))
+    if category is not None:
+        must.append(models.FieldCondition(key="category", match=models.MatchValue(value=category)))
     return models.Filter(must=must)
 
 

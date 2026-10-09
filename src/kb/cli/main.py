@@ -18,6 +18,9 @@ from kb.cli.ingest import (
 from kb.cli.search import ask_command, search_command
 from kb.cli.serve import serve_command
 
+# Batches that run for many minutes: Windows is kept awake while they run (kb.core.perf.keep_awake).
+LONG_COMMANDS = {"parse", "chunk", "index", "eval", "eval-answers", "coverage"}
+
 
 def main(argv: list[str] | None = None) -> int:
     """Entry point of the `kb` command: parse arguments and run the chosen subcommand."""
@@ -76,12 +79,29 @@ def main(argv: list[str] | None = None) -> int:
                      help="rerank only the first N candidates; 0 = all (default: KB_RERANK_TOP, 20)")
     ask.add_argument("--show-context", action="store_true", help="print the context sent to the LLM first")
     ask.add_argument("--no-stream", action="store_true", help="print the answer only when it is complete")
+    ask.add_argument("--no-compare", action="store_true",
+                     help="answer comparisons with one search instead of one search per side")
+    # Read step disabled (TO-5.10, TD-14):
+    # ask.add_argument("--compare-read", action="store_true",
+    #                  help="comparisons: let the model pick more sections of each guide from its table of "
+    #                       "contents (default: KB_COMPARE_READ)")
+    ask.add_argument("--no-refusal-retry", action="store_true",
+                     help="do not ask again with the best sources only when the model finds no answer "
+                          "(the retry is on unless KB_REFUSAL_RETRY=false)")
     eval_answers = commands.add_parser("eval-answers", help="evaluate generated answers against the golden set")
     eval_answers.add_argument("--questions", help="comma-separated golden ids, e.g. q001,q012 (default: all)")
     eval_answers.add_argument("--types", help="comma-separated question types: lookup, howto, compare, unanswerable")
     eval_answers.add_argument("--no-judge", action="store_true", help="skip the LLM faithfulness judge (faster)")
     eval_answers.add_argument("--provider", choices=["auto", "ollama", "openai"],
                               help="LLM provider for the answers (default: KB_LLM_PROVIDER, auto)")
+    eval_answers.add_argument("--no-compare", action="store_true",
+                              help="answer comparisons with one search (baseline for the comparison path)")
+    # Read step disabled (TO-5.10, TD-14):
+    # eval_answers.add_argument("--compare-read", action="store_true",
+    #                           help="comparisons: read more sections chosen from each guide's table of contents "
+    #                                "(default: KB_COMPARE_READ)")
+    eval_answers.add_argument("--no-refusal-retry", action="store_true",
+                              help="no second attempt after a refusal (baseline for the refusal retry)")
     eval_answers.add_argument("--details", action="store_true",
                               help="also print missing strings and unsupported claims per question")
     eval_cmd = commands.add_parser("eval", help="evaluate retrieval configurations against the golden set")
@@ -91,9 +111,17 @@ def main(argv: list[str] | None = None) -> int:
     eval_cmd.add_argument("--misses", action="store_true", help="list questions without a hit in the top 5")
 
     args = parser.parse_args(argv)
-    from kb.core.perf import disable_power_throttling
+    from contextlib import nullcontext
+
+    from kb.core.perf import disable_power_throttling, keep_awake
 
     disable_power_throttling()       # keep CPU model work at full speed when the window is in the background
+    with keep_awake() if args.command in LONG_COMMANDS else nullcontext():   # no Modern Standby mid-batch
+        return _run(args)
+
+
+def _run(args: argparse.Namespace) -> int:
+    """Run the chosen subcommand."""
     if args.command == "manifest":
         return {"validate": manifest_validate, "scan": manifest_scan}[args.action]()
     if args.command == "parse":

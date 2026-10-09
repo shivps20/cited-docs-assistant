@@ -98,11 +98,16 @@ class FakeAnswerer:
     def __init__(self, conn, log):
         self.conn, self.log = conn, log
 
-    def answer(self, req, *, provider=None, on_token=None, on_context=None, asked=None, pre_stages=()):
+    def answer(self, req, *, provider=None, on_token=None, on_context=None, asked=None, pre_stages=(),
+               on_status=None):
         self.log.append({"query": req.query, "groups": req.groups, "release": req.release, "asked": asked,
                          "pre_stages": [s[0] for s in pre_stages]})
         if req.query == "boom":
             raise LLMError("Ollama is not reachable")
+        if "versus" in req.query:
+            on_status("comparing", {})
+            for i, side in enumerate(("MSSQL", "Oracle"), start=1):
+                on_status("searching_side", {"side": side, "index": i, "total": 2})
         on_context([unit()])
         for piece in ("CoreServer uses ", "port 9040 [1]."):
             on_token(piece)
@@ -170,6 +175,14 @@ def test_follow_up_is_condensed_and_release_stays_sticky(app_env):
     assert second["query"] == "Which TomEE port does CoreServer use on Oracle?" and second["asked"] == "and on Oracle?"
     assert second["release"] == 2026 and second["pre_stages"] == ["condense"]
     assert events[-1][1]["standalone_query"] == "Which TomEE port does CoreServer use on Oracle?"
+
+
+def test_comparison_progress_is_streamed_per_side(app_env):
+    client, _, _ = app_env
+    events = parse_sse(client.post("/api/chat", json={"question": "Database creation on MSSQL versus Oracle?"}).text)
+    statuses = [d for e, d in events if e == "status"]
+    assert [d["stage"] for d in statuses] == ["searching", "comparing", "searching_side", "searching_side"]
+    assert statuses[3] == {"stage": "searching_side", "side": "Oracle", "index": 2, "total": 2}
 
 
 def test_chat_rejects_other_users_sessions_and_blank_questions(app_env):
