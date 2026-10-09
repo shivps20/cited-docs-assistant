@@ -223,6 +223,8 @@ def _profile(name: str, spec, settings: Settings, errors: list[str]) -> ModelPro
     temperature = spec.get("temperature")
     if temperature is not None and (not isinstance(temperature, int | float) or not 0 <= temperature <= 2):
         errors.append(f"{where}: temperature must be a number from 0 to 2 (or left out)")
+    if temperature is not None and adapter == "anthropic":
+        errors.append(f"{where}: current Claude models reject temperature; leave it out (use effort)")
     effort = str(spec.get("effort") or "")
     if effort and adapter != "anthropic":
         errors.append(f"{where}: effort is only used by the anthropic adapter")

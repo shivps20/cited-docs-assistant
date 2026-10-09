@@ -66,7 +66,7 @@ models:
     location: external
     api_key_env: ANTHROPIC_API_KEY
     context_tokens: 200000
-    max_output_tokens: 4000
+    max_output_tokens: 8000   # Claude counts its thinking toward this cap
     effort: medium            # low | medium | high | xhigh | max (thinking is always on)
     refusal_retry: true       # built for the 7B model; switch off per model if the evaluation shows no need
     fallback: local-qwen

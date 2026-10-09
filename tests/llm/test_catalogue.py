@@ -73,6 +73,7 @@ models:
   loop-a: {adapter: ollama, model: m, fallback: loop-b}
   loop-b: {adapter: ollama, model: m, fallback: loop-a}
   "Bad Name": {adapter: ollama, model: m}
+  claude2: {adapter: anthropic, model: claude-opus-5-5, location: external, api_key_env: K, temperature: 0}
 """
     with pytest.raises(CatalogueError) as err:
         load_catalogue(write(tmp_path, bad), settings())
@@ -82,7 +83,7 @@ models:
                      "'model' (the provider's model id) is required", "context_tokens must be at least",
                      "max_output_tokens must be smaller", "temperature must be a number", "fallbacks loop",
                      "names are lowercase", "unknown role 'reviewer'", "role 'answer': model 'missing'",
-                     "fallback 'claude' is not one of the models"]:
+                     "fallback 'claude' is not one of the models", "current Claude models reject temperature"]:
         assert expected in text, expected
 
 

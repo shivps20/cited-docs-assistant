@@ -170,6 +170,7 @@ uv run kb search "..." --rerank-top 0 --min-score 0.3                           
 | Command | What it does |
 |---|---|
 | `uv run kb models list` | Validate `config/models.yaml` (every problem listed at once) and show each model: adapter, local / external, whether its key is set, context and output size, model id and the roles it has |
+| `uv run kb models check [--model NAME]` | Send every configured model (or the named ones) a tiny text prompt and a JSON prompt: reachable, seconds, token counts, whether JSON works. Models without a key are skipped; costs a few tokens per model |
 
 Without `config/models.yaml` it shows the catalogue built from the older settings (`LLM_MODEL`, `OPENAI_*`).
 

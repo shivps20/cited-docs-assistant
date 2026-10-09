@@ -15,7 +15,7 @@ from kb.cli.ingest import (
     show_coverage,
     show_status,
 )
-from kb.cli.models import models_list
+from kb.cli.models import models_check, models_list
 from kb.cli.search import ask_command, search_command
 from kb.cli.serve import serve_command
 
@@ -33,6 +33,8 @@ def main(argv: list[str] | None = None) -> int:
     models = commands.add_parser("models", help="language model catalogue (config/models.yaml)").add_subparsers(
         dest="action", required=True)
     models.add_parser("list", help="validate the catalogue and list models, roles and keys")
+    check = models.add_parser("check", help="send every configured model a tiny prompt (reachable, speed, JSON)")
+    check.add_argument("--model", action="append", metavar="NAME", help="only this model (repeatable)")
     parse = commands.add_parser("parse", help="parse documents with Docling and cache the result")
     parse.add_argument("--doc", action="append", metavar="DOC_ID", help="only this document (repeatable)")
     parse.add_argument("--force", action="store_true", help="re-parse even if a cached result exists")
@@ -129,7 +131,7 @@ def _run(args: argparse.Namespace) -> int:
     if args.command == "manifest":
         return {"validate": manifest_validate, "scan": manifest_scan}[args.action]()
     if args.command == "models":
-        return {"list": models_list}[args.action]()
+        return models_list() if args.action == "list" else models_check(args.model)
     if args.command == "parse":
         return parse_documents(args.doc, args.force)
     if args.command == "status":
