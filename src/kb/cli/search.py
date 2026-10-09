@@ -106,7 +106,8 @@ def ask_command(args) -> int:
         return 1
     answerer = Answerer(conn, retriever, models, not_found_score=s.not_found_score,
                         provider=args.model or s.llm_provider, compare=not args.no_compare,
-                        refusal_retry=s.refusal_retry and not args.no_refusal_retry)
+                        refusal_retry=s.refusal_retry and not args.no_refusal_retry,
+                        cache=s.answer_cache and not args.no_cache)
     rerank_top = s.rerank_top if args.rerank_top is None else (args.rerank_top or None)
     request = SearchRequest(args.query, groups=_parse_groups(args.groups), release=release, mode=args.mode,
                             rerank=not args.no_rerank, rerank_top=rerank_top, user_id="cli")
@@ -138,7 +139,7 @@ def ask_command(args) -> int:
         return 1
 
     print("\n" if streamed else answer.text + "\n")
-    if streamed and answer.references:   # added after generation, so not part of the stream
+    if streamed and answer.references and not answer.cached_from:   # added after generation, not streamed
         print("\n".join([REFERENCES_HEADING, *answer.references]) + "\n")
     if answer.sources:
         print("Sources:")
@@ -158,7 +159,9 @@ def ask_command(args) -> int:
         print(f"compared: {' | '.join(answer.sides)} (one search per side)")
     line = f"retrieval {retrieval_ms / 1000:.1f} s (rerank {t.get('rerank', 0) / 1000:.1f} s)"
     g = answer.generation
-    if g:
+    if answer.cached_from:
+        line = f"answered from the answer cache (stored from trace {answer.cached_from})"
+    elif g:
         speed = f", {g.tokens_per_s:.0f} tok/s" if g.tokens_per_s else ""
         load = f", model load {g.load_seconds:.1f} s" if g.load_seconds and g.load_seconds > 0.5 else ""
         line += (f" | generation {t.get('generate', 0) / 1000:.1f} s with {g.provider} {g.model} "

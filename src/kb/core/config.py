@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     # best-matching sources (TD-23: the 7B model gives up on long or mixed context; measured: 2 of 5
     # wrong refusals rescued, all unanswerable questions still refused).
     refusal_retry: bool = Field(True, validation_alias="KB_REFUSAL_RETRY")
+    # Exact-match answer cache (kb.answer.cache): the same question under the same conditions (groups,
+    # release, corpus, model, prompt) is answered from SQLite without search or the LLM.
+    answer_cache: bool = Field(True, validation_alias="KB_ANSWER_CACHE")
 
     # LLM
     ollama_host: str = "http://127.0.0.1:11434"

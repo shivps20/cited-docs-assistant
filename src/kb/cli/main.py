@@ -3,6 +3,7 @@
 import argparse
 import sys
 
+from kb.cli.cache import cache_clear, cache_stats
 from kb.cli.evaluation import eval_answers_command, eval_command
 from kb.cli.ingest import (
     chunk_documents,
@@ -90,6 +91,11 @@ def main(argv: list[str] | None = None) -> int:
     ask.add_argument("--no-refusal-retry", action="store_true",
                      help="do not ask again with the best sources only when the model finds no answer "
                           "(the retry is on unless KB_REFUSAL_RETRY=false)")
+    ask.add_argument("--no-cache", action="store_true",
+                     help="neither read nor store the answer cache (the cache is on unless KB_ANSWER_CACHE=false)")
+    cache = commands.add_parser("cache", help="answer cache: statistics or clear")
+    cache.add_argument("action", choices=["stats", "clear"])
+    cache.add_argument("--stale", action="store_true", help="clear: only entries of an older corpus")
     eval_answers = commands.add_parser("eval-answers", help="evaluate generated answers against the golden set")
     eval_answers.add_argument("--questions", help="comma-separated golden ids, e.g. q001,q012 (default: all)")
     eval_answers.add_argument("--types", help="comma-separated question types: lookup, howto, compare, unanswerable")
@@ -124,6 +130,8 @@ def _run(args: argparse.Namespace) -> int:
     """Run the chosen subcommand."""
     if args.command == "manifest":
         return {"validate": manifest_validate, "scan": manifest_scan}[args.action]()
+    if args.command == "cache":
+        return cache_stats() if args.action == "stats" else cache_clear(args.stale)
     if args.command == "models":
         return models_list() if args.action == "list" else models_check(args.model)
     if args.command == "parse":

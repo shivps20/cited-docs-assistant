@@ -26,6 +26,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
+from kb.answer.cache import AnswerCache
 from kb.api import sessions
 from kb.api.chat import stream_turn
 from kb.api.health import check_health
@@ -47,6 +48,7 @@ class ChatRequest(BaseModel):
     session_id: str | None = None
     model: str | None = Field(None, max_length=64)       # a catalogue model name; None: the answer role
     provider: str | None = Field(None, max_length=64)    # older name for `model` (auto / ollama / openai)
+    cache: bool = True                                   # False: answer afresh, not from the answer cache
 
     @field_validator("question")
     @classmethod
@@ -183,7 +185,7 @@ def create_app(services: Services | None = None) -> FastAPI:
                 raise HTTPException(status_code=404, detail="session not found")
         else:
             session = sessions.create_session(conn, user)
-        return StreamingResponse(stream_turn(svc, user, session, body.question, model),
+        return StreamingResponse(stream_turn(svc, user, session, body.question, model, body.cache),
                                  media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
@@ -202,6 +204,8 @@ def create_app(services: Services | None = None) -> FastAPI:
         saved = sessions.save_feedback(conn, body.trace_id, user.user_id, body.rating, comment)
         if saved is None:
             raise HTTPException(status_code=404, detail="answer not found")
+        if body.rating < 0:     # a bad answer is not served from the cache again
+            AnswerCache(conn).forget_trace(body.trace_id)
         return saved
 
     @app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)

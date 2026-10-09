@@ -1,7 +1,12 @@
 import pytest
 
 from kb.answer.pipeline import Answer, Source
-from kb.evaluation.answers import answer_commands, contains, run_answer_eval, unverified_commands
+from kb.evaluation.answers import (
+    answer_commands,
+    contains,
+    run_answer_eval,
+    unverified_commands,
+)
 from kb.llm.judge import (
     Claim,
     Verdict,
@@ -178,7 +183,7 @@ class PartJudge:
     def generate(self, messages, *, on_token=None, json_format=False, json_schema=None):
         """One claim quoting the context."""
         self.calls += 1
-        reply = '{"claims": [{"claim": "part %d", "evidence": "t", "supported": true}]}' % self.calls
+        reply = f'{{"claims": [{{"claim": "part {self.calls}", "evidence": "t", "supported": true}}]}}'
         return Generation(reply, "ollama", "qwen", 0.5)
 
 

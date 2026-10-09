@@ -101,9 +101,9 @@ class FakeAnswerer:
         self.conn, self.log = conn, log
 
     def answer(self, req, *, provider=None, on_token=None, on_context=None, asked=None, pre_stages=(),
-               on_status=None):
+               on_status=None, use_cache=True):
         self.log.append({"query": req.query, "groups": req.groups, "release": req.release, "asked": asked,
-                         "pre_stages": [s[0] for s in pre_stages], "model": provider})
+                         "pre_stages": [s[0] for s in pre_stages], "model": provider, "use_cache": use_cache})
         if req.query == "boom":
             raise LLMError("Ollama is not reachable")
         if "versus" in req.query:
@@ -308,3 +308,23 @@ def test_models_yaml_is_reloaded_when_it_changes_and_a_broken_edit_is_ignored(tm
     path.write_text("models: [not, a, mapping]\n", encoding="utf-8")
     os.utime(path, (path.stat().st_atime, path.stat().st_mtime + 5))      # a newer edit, with an error
     assert svc.current_models() is reloaded                                # the previous catalogue stays
+
+
+def test_thumbs_down_removes_the_answer_from_the_cache(app_env):
+    client, _, db = app_env
+    add_trace(db, "trace-cached", "guest")
+    conn = connect(db)
+    with conn:
+        conn.execute("INSERT INTO answer_cache (cache_key, query_norm, user_groups, index_version, model_id, answer) "
+                     "VALUES ('k', 'which port', '[]', 'c', 'm', ?)", ('{"trace_id": "trace-cached"}',))
+    client.post("/api/feedback", json={"trace_id": "trace-cached", "rating": 1})
+    assert conn.execute("SELECT COUNT(*) FROM answer_cache").fetchone()[0] == 1      # 👍 keeps it
+    client.post("/api/feedback", json={"trace_id": "trace-cached", "rating": -1})
+    assert conn.execute("SELECT COUNT(*) FROM answer_cache").fetchone()[0] == 0
+    conn.close()
+
+
+def test_chat_can_skip_the_cache(app_env):
+    client, services, _ = app_env
+    client.post("/api/chat", json={"question": "Which port?", "cache": False})
+    assert services.calls[-1]["use_cache"] is False

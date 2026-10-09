@@ -9,6 +9,8 @@ side (kb.agent.compare), so every side reaches the context; everything after ret
 Which model writes the answer comes from the model registry (kb.llm.registry): the requested model,
 its fallbacks and the local fallback, filtered by the privacy policy (external models only see
 contexts whose sources all have external_ok).
+With cache=True, a question asked again under the same conditions is answered from the answer cache
+(kb.answer.cache) without search or the LLM; clean answers are stored there.
 """
 
 import dataclasses
@@ -25,6 +27,7 @@ from kb.agent.compare import (
 )
 from kb.agent.route import ANSWER, COMPARE, Route, route_question
 from kb.agent.tools import KBTools
+from kb.answer.cache import AnswerCache, CachedAnswer, CacheKey, cache_key
 from kb.core.tracing import Tracer
 from kb.llm.prompts import (
     NOT_FOUND,
@@ -34,6 +37,7 @@ from kb.llm.prompts import (
     infer_sources,
     missing_references,
     source_line,
+    system_prompt,
 )
 from kb.llm.providers import Generation, LLMError, LLMProvider
 from kb.llm.registry import AUTO, ModelRegistry, registry_from
@@ -46,6 +50,7 @@ ANSWERED = "answered"
 NOT_FOUND_STATUS = "not_found"
 RETRY_UNITS = 3            # refusal retry: the best units of a normal question
 RETRY_UNITS_PER_SIDE = 2   # ... and of each side of a comparison
+CACHE_VERSION = 1          # bump to retire every cached answer after a change the key does not see
 
 
 @dataclass
@@ -86,6 +91,8 @@ class Answer:
     retried_from: int = 0                   # units of the first attempt, when a refusal was retried
     read_sections: int = 0                  # sections added by the comparison read step
     model_profile: str = ""                 # the catalogue model that wrote the answer
+    fallback_from: list[str] = field(default_factory=list)   # models that failed before model_profile answered
+    cached_from: str = ""                   # cache hit: the trace of the answer that was stored
 
     @property
     def refused_by(self) -> str | None:
@@ -132,7 +139,7 @@ class Answerer:
     def __init__(self, conn: sqlite3.Connection, retriever: Retriever,
                  models: ModelRegistry | Mapping[str, LLMProvider] | None = None, *,
                  not_found_score: float = 0.1, provider: str = AUTO, compare: bool = True,
-                 planner: LLMProvider | None = None, refusal_retry: bool = False):
+                 planner: LLMProvider | None = None, refusal_retry: bool = False, cache: bool = False):
         """Keep the retriever and the model registry.
 
         models: a ModelRegistry, a mapping of ready adapters ('ollama', optionally 'openai'), or None
@@ -143,6 +150,8 @@ class Answerer:
         compare: route comparison questions to the comparison path (False: one search for every question).
         planner: the model that splits comparisons into sides (default: the catalogue's planner role).
         refusal_retry: when the LLM refuses, ask once more with only the best-matching units (TD-23).
+        cache: answer repeated questions from the answer cache and store clean answers there
+            (kb.answer.cache); off for evaluation, which must measure the pipeline itself.
         The read step and the refusal retry are switched per model in the catalogue (compare_read,
         refusal_retry); refusal_retry here can switch the retry off for every model.
         """
@@ -154,12 +163,13 @@ class Answerer:
         self.compare = compare
         self.planner = planner if planner is not None else self.models.for_role("planner")
         self.refusal_retry = refusal_retry
+        self.cache = cache
 
     def answer(self, req: SearchRequest, *, provider: str | None = None,
                on_token: Callable[[str], None] | None = None,
                on_context: Callable[[list[ContextUnit]], None] | None = None,
                asked: str | None = None, pre_stages: Sequence[tuple[str, float, dict]] = (),
-               on_status: Callable[[str, dict], None] | None = None) -> Answer:
+               on_status: Callable[[str, dict], None] | None = None, use_cache: bool = True) -> Answer:
         """on_token receives the answer as it streams; on_context the context, before generation;
         on_status(stage, data) the comparison progress: 'comparing' before the question is split,
         then 'searching_side' {side, index, total} before each side's search, 'reading' {sections}
@@ -168,7 +178,8 @@ class Answerer:
 
         req.query is what is searched and answered. asked: the user's own words when req.query is a
         condensed follow-up (the trace keeps both). pre_stages: (name, ms, data) of stages timed before
-        the trace started, recorded first (e.g. condensing).
+        the trace started, recorded first (e.g. condensing). use_cache=False: answer afresh (the
+        answer is still stored when the cache is on).
         """
         requested = provider or self.provider
         target = self.models.catalogue.profile(self.models.resolve(requested))   # the model retrieval is sized for
@@ -179,45 +190,118 @@ class Answerer:
                 trace.set(standalone_query=req.query)
             for name, ms, data in pre_stages:
                 trace.add_stage(name, ms, **data)
-            route, plan = self._route(req.query, trace, on_status)
-            side_docs: dict[str, str] = {}
-            tools = KBTools(self.conn, self.retriever, req, trace)
-            if plan is not None and plan.sides:
-                total = len(plan.sides)
-                on_side = (lambda i, side: on_status("searching_side", {"side": side.label, "index": i, "total": total})
-                           ) if on_status else None
-                result = retrieve_sides(tools, req.query, plan.sides, on_side=on_side, side_docs=side_docs,
-                                        per_side=budget.per_side, max_tokens=budget.compare_tokens)
-                trace.set(top_rerank_score=result.candidates[0].rerank_score if result.candidates else None)
-            else:
-                result = self.retriever.retrieve(req, trace)
-            sides = [s.label for s in plan.sides] if plan is not None else []
-            trace.set(route=COMPARE if sides else ANSWER)
-
-            with trace.stage("gate", threshold=self.not_found_score) as stage:
-                decision = gate(result, self.not_found_score)
-                stage.update(decision=decision.decision, top_score=decision.top_score)
-            trace.set(gate_decision=decision.decision)
-
-            answer = Answer(question=req.query, text=NOT_FOUND, status=NOT_FOUND_STATUS, gate=decision,
-                            sources=[], context=result.context, candidates=result.candidates,
-                            trace_id=trace.trace_id, timings_ms={}, route=COMPARE if sides else ANSWER,
-                            sides=sides)
-            if route.kind == COMPARE and not sides:
-                answer.notices.append(f"Comparison answered with one search ({plan.reason if plan else route.reason}).")
-            # Read step (TO-5.10): only for an answer model whose profile has compare_read: true; off for
-            # every model by default (with qwen2.5 7B it did not improve answers).
-            if sides and target.compare_read and decision.passed:
-                self._read_more(answer, tools, side_docs, trace, on_status)
-            if on_context:
-                on_context(answer.context)
-            if decision.passed:
-                self._generate(answer, trace, requested, on_token, on_context)
-                if (self.refusal_retry and answer.status == NOT_FOUND_STATUS
-                        and self._profile_retries(answer.model_profile)):
-                    self._retry_smaller(answer, trace, requested, on_token, on_context, on_status)
+            key = self._cache_key(req, target) if self.cache else None
+            answer = self._from_cache(key, req, trace, on_token, on_context) if key and use_cache else None
+            if answer is None:
+                answer = self._answer_fresh(req, trace, requested, target, budget, on_token, on_context, on_status)
+                if key and self._cacheable(answer, target):
+                    AnswerCache(self.conn).put(key, self._payload(answer))
             trace.set(answer=answer.text, sources=[s.__dict__ for s in answer.sources])
         answer.timings_ms = stage_timings(trace)
+        return answer
+
+    def _answer_fresh(self, req: SearchRequest, trace: Tracer, requested: str, target, budget,
+                      on_token: Callable[[str], None] | None,
+                      on_context: Callable[[list[ContextUnit]], None] | None,
+                      on_status: Callable[[str, dict], None] | None) -> Answer:
+        """Route, retrieve, gate and generate: the answer when it does not come from the cache."""
+        route, plan = self._route(req.query, trace, on_status)
+        side_docs: dict[str, str] = {}
+        tools = KBTools(self.conn, self.retriever, req, trace)
+        if plan is not None and plan.sides:
+            total = len(plan.sides)
+            on_side = (lambda i, side: on_status("searching_side", {"side": side.label, "index": i, "total": total})
+                       ) if on_status else None
+            result = retrieve_sides(tools, req.query, plan.sides, on_side=on_side, side_docs=side_docs,
+                                    per_side=budget.per_side, max_tokens=budget.compare_tokens)
+            trace.set(top_rerank_score=result.candidates[0].rerank_score if result.candidates else None)
+        else:
+            result = self.retriever.retrieve(req, trace)
+        sides = [s.label for s in plan.sides] if plan is not None else []
+        trace.set(route=COMPARE if sides else ANSWER)
+
+        with trace.stage("gate", threshold=self.not_found_score) as stage:
+            decision = gate(result, self.not_found_score)
+            stage.update(decision=decision.decision, top_score=decision.top_score)
+        trace.set(gate_decision=decision.decision)
+
+        answer = Answer(question=req.query, text=NOT_FOUND, status=NOT_FOUND_STATUS, gate=decision,
+                        sources=[], context=result.context, candidates=result.candidates,
+                        trace_id=trace.trace_id, timings_ms={}, route=COMPARE if sides else ANSWER,
+                        sides=sides)
+        if route.kind == COMPARE and not sides:
+            answer.notices.append(f"Comparison answered with one search ({plan.reason if plan else route.reason}).")
+        # Read step (TO-5.10): only for an answer model whose profile has compare_read: true; off for
+        # every model by default (with qwen2.5 7B it did not improve answers).
+        if sides and target.compare_read and decision.passed:
+            self._read_more(answer, tools, side_docs, trace, on_status)
+        if on_context:
+            on_context(answer.context)
+        if decision.passed:
+            self._generate(answer, trace, requested, on_token, on_context)
+            if (self.refusal_retry and answer.status == NOT_FOUND_STATUS
+                    and self._profile_retries(answer.model_profile)):
+                self._retry_smaller(answer, trace, requested, on_token, on_context, on_status)
+        return answer
+
+    def _cache_key(self, req: SearchRequest, target) -> CacheKey:
+        """The cache key of this request for the target answer model (kb.answer.cache)."""
+        retrieval = {k: getattr(req, k) for k in ("category", "mode", "rerank", "candidates", "rerank_top",
+                                                  "min_context_score", "max_context_units", "max_context_tokens")}
+        settings = {"version": CACHE_VERSION, "profile": dataclasses.asdict(target), "prompt": system_prompt(),
+                    "compare": self.compare, "refusal_retry": self.refusal_retry,
+                    "not_found_score": self.not_found_score, "planner": getattr(self.planner, "model", None)}
+        release = f"R{req.release}x" if req.release is not None else None
+        return cache_key(self.conn, req.query, groups=req.groups, release=release, retrieval=retrieval,
+                         model=target.name, settings=settings)
+
+    @staticmethod
+    def _cacheable(answer: Answer, target) -> bool:
+        """Store only clean answers: answered, by the requested model itself (no fallback after an error,
+        no model swapped by the privacy policy)."""
+        return (answer.status == ANSWERED and answer.generation is not None and not answer.fallback_from
+                and answer.model_profile == target.name)
+
+    @staticmethod
+    def _payload(answer: Answer) -> dict:
+        """The answer as stored in the cache (everything but candidates and timings)."""
+        return {"trace_id": answer.trace_id, "question": answer.question, "text": answer.text,
+                "status": answer.status, "gate": dataclasses.asdict(answer.gate),
+                "sources": [dataclasses.asdict(s) for s in answer.sources],
+                "context": [dataclasses.asdict(u) for u in answer.context],
+                "references": answer.references, "notices": answer.notices,
+                "invalid_citations": answer.invalid_citations, "route": answer.route, "sides": answer.sides,
+                "retried_from": answer.retried_from, "read_sections": answer.read_sections,
+                "model_profile": answer.model_profile,
+                "generation": {"provider": answer.generation.provider, "model": answer.generation.model}}
+
+    def _from_cache(self, key: CacheKey, req: SearchRequest, trace: Tracer,
+                    on_token: Callable[[str], None] | None,
+                    on_context: Callable[[list[ContextUnit]], None] | None) -> Answer | None:
+        """The cached answer for `key` as a new Answer in this trace, or None on a miss."""
+        with trace.stage("cache", question=key.question, corpus=key.corpus, model=key.model) as stage:
+            hit: CachedAnswer | None = AnswerCache(self.conn).get(key)
+            stage.update(hit=hit is not None, served_from=hit.trace_id if hit else None)
+        if hit is None:
+            return None
+        p = hit.payload
+        answer = Answer(question=req.query, text=p["text"], status=p["status"], gate=hit.gate(),
+                        sources=[Source(**s) for s in p["sources"]], context=hit.context(), candidates=[],
+                        trace_id=trace.trace_id, timings_ms={}, generation=hit.generation(),
+                        invalid_citations=p["invalid_citations"], references=p["references"],
+                        notices=[*p["notices"], (f"Answered from the answer cache: the same question was answered "
+                                                 f"on {hit.created_at[:16].replace('T', ' ')} UTC (served "
+                                                 f"{hit.hit_count}x). A 👎 removes it, so the next ask is answered "
+                                                 "afresh.")],
+                        route=p["route"], sides=p["sides"], retried_from=p["retried_from"],
+                        read_sections=p["read_sections"], model_profile=p["model_profile"], cached_from=hit.trace_id)
+        trace.set(cache_hit=True, route=answer.route, gate_decision=answer.gate.decision, index_version=key.corpus,
+                  top_rerank_score=answer.gate.top_score, llm_provider=answer.generation.provider,
+                  llm_model=answer.generation.model)
+        if on_context:
+            on_context(answer.context)
+        if on_token:
+            on_token(answer.text)
         return answer
 
     def _route(self, question: str, trace: Tracer,
@@ -326,6 +410,7 @@ class Answerer:
                         on_token("\n")
             if failed:
                 stage["fallback_from"] = failed
+                answer.fallback_from = failed
             if len(context) < len(full):
                 stage["context_fitted"] = [len(full), len(context)]
                 answer.notices.append(f"{profile.name} has a smaller context window: answered from the "

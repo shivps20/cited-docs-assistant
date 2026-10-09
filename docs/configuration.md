@@ -16,6 +16,7 @@ All settings come from `.env` (see [.env.example](../.env.example)) through `kb.
 | `KB_RERANK_TOP` | `20` | Candidates reranked per search (see [architecture.md](architecture.md#retrieval)) |
 | `KB_NOT_FOUND_SCORE` | `0.1` | Reply "not found" without the LLM below this top rerank score (see [architecture.md](architecture.md#answering)) |
 | `KB_REFUSAL_RETRY` | `true` | When the model replies "not found", ask once more with only the best-matching sources (3, or 2 per side of a comparison) |
+| `KB_ANSWER_CACHE` | `true` | Answer a repeated question from the answer cache (same question, groups, release, corpus, model and prompt; see [architecture.md](architecture.md#answer-cache)) |
 | `KB_LLM_PROVIDER` | `auto` | `auto` (the catalogue's answer role), `ollama` (the local fallback) or `openai`; superseded by `config/models.yaml` roles |
 | `KB_USERS_PATH` | `config/users.yaml` | Chat API users and their access groups |
 | `KB_API_HOST`, `KB_API_PORT` | `127.0.0.1`, `8000` | Where `kb serve` listens (keep loopback: no authentication) |

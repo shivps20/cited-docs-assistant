@@ -174,6 +174,14 @@ uv run kb search "..." --rerank-top 0 --min-score 0.3                           
 
 Without `config/models.yaml` it shows the catalogue built from the older settings (`LLM_MODEL`, `OPENAI_*`).
 
+### `kb cache` — answer cache
+
+| Command | What it does |
+|---|---|
+| `uv run kb cache stats` | Entries (of the current corpus and stale), answers served from the cache, the most-served questions |
+| `uv run kb cache clear` | Remove every entry |
+| `uv run kb cache clear --stale` | Remove only entries of an older corpus (they can no longer be hit; storing a new answer also removes them) |
+
 ### `kb ask` — answer a question with citations
 
 | Option | Default | Meaning |
@@ -189,6 +197,7 @@ Without `config/models.yaml` it shows the catalogue built from the older setting
 | `--no-stream` | | Print the answer only when it is complete |
 | `--no-compare` | | Answer comparison questions with one search instead of one search per side |
 | `--no-refusal-retry` | `KB_REFUSAL_RETRY` (on) | No second attempt with the best-matching sources when the model finds no answer |
+| `--no-cache` | `KB_ANSWER_CACHE` (on) | Neither read nor store the answer cache: always search and ask the model |
 
 After the answer it prints the sources, any notes (removed citations, provider choice, a comparison answered with one search, an answer found on the second attempt), the status (`answered`, or `not found` by the gate or by the LLM), timings and the trace ID.
 

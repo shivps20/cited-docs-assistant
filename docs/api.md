@@ -21,9 +21,9 @@ Loads bge-m3, the reranker and the LLM providers **once** at startup (~20 s), so
 | `GET /api/sessions` | The current user's conversations, most recent first, titled by their first question |
 | `GET /api/sessions/{id}` | One conversation with its messages (404 if it is another user's) |
 | `PUT /api/sessions/{id}/release` | Set (`{"release": "R2025x"}`) or clear (`{"release": null}`) the conversation's release filter |
-| `POST /api/feedback` | Rate one of your answers: `{"trace_id": "…", "rating": 1 \| -1, "comment": "…" (optional)}`; rating again replaces the earlier rating (404 for another user's answer) |
+| `POST /api/feedback` | Rate one of your answers: `{"trace_id": "…", "rating": 1 \| -1, "comment": "…" (optional)}`; rating again replaces the earlier rating (404 for another user's answer). A 👎 also removes the answer from the answer cache (whether it was the stored answer or a cached copy), so the next ask is answered afresh |
 | `GET /` | The chat UI |
-| `POST /api/chat` | Ask a question: body `{"question": "…", "session_id": "…" (optional: a new conversation without it), "model": "claude-opus" (optional: a name from `config/models.yaml`; without it the answer role's model; `provider` is accepted as the older name)}`. An unknown model is a 400 listing the configured ones. Answers as a stream of server-sent events (below); `final` names the model that answered (`model_profile`) |
+| `POST /api/chat` | Ask a question: body `{"question": "…", "session_id": "…" (optional: a new conversation without it), "model": "claude-opus" (optional: a name from `config/models.yaml`; without it the answer role's model; `provider` is accepted as the older name), "cache": false (optional: answer afresh instead of from the answer cache)}`. An unknown model is a 400 listing the configured ones. Answers as a stream of server-sent events (below); `final` names the model that answered (`model_profile`) |
 
 The user is named by the `X-KB-User` header (the default user from `config/users.yaml` when absent); unknown users get 403. Access groups always come from `config/users.yaml` (example: [config/users.example.yaml](../config/users.example.yaml)), never from the request, so a client cannot claim more access than configured.
 

@@ -10,7 +10,7 @@ queue; the HTTP response streams them as they arrive:
                                                                  sections read ({sections})
     context   {sources: [...]}                                   context sent to the LLM (for the UI panel)
     token     {text}                                             streamed answer pieces (raw model output)
-    final     {answer, status, sources, references, ...}         the cleaned answer: replaces the streamed text
+    final     {answer, status, sources, references, cached, ...} the cleaned answer: replaces the streamed text
     error     {message}                                          instead of final, if the turn failed
 
 Turn order: read the recent history → resolve the release (sticky per session) → condense a
@@ -73,23 +73,25 @@ def final_payload(answer: Answer, *, standalone: str | None, condense_reason: st
         "model_profile": answer.model_profile or None,
         "tokens_per_s": round(g.tokens_per_s, 1) if g and g.tokens_per_s else None,
         "timings_ms": answer.timings_ms, "trace_id": answer.trace_id, "message_id": message_id,
+        "cached": bool(answer.cached_from),
     }
 
 
 def run_turn(services: Services, user: User, session_id: str, question: str, provider: str | None,
-             emit: Emit) -> None:
-    """Answer one question in a session, reporting progress through `emit` (runs in a worker thread)."""
+             emit: Emit, use_cache: bool = True) -> None:
+    """Answer one question in a session, reporting progress through `emit` (runs in a worker thread).
+    use_cache=False: answer afresh instead of from the answer cache."""
     if not services.model_lock.acquire(blocking=False):   # one turn at a time on the shared models and GPU
         emit("status", {"stage": "queued"})
         services.model_lock.acquire()
     try:
-        _run_turn_locked(services, user, session_id, question, provider, emit)
+        _run_turn_locked(services, user, session_id, question, provider, emit, use_cache)
     finally:
         services.model_lock.release()
 
 
 def _run_turn_locked(services: Services, user: User, session_id: str, question: str, provider: str | None,
-                     emit: Emit) -> None:
+                     emit: Emit, use_cache: bool = True) -> None:
     """The turn itself, with the model lock held."""
     conn = services.connect()
     try:
@@ -117,7 +119,7 @@ def _run_turn_locked(services: Services, user: User, session_id: str, question: 
             request, provider=provider, asked=question, pre_stages=pre_stages,
             on_token=lambda piece: emit("token", {"text": piece}),
             on_context=lambda units: emit("context", context_payload(units)),
-            on_status=lambda stage, data: emit("status", {"stage": stage, **data}))
+            on_status=lambda stage, data: emit("status", {"stage": stage, **data}), use_cache=use_cache)
 
         message_id = sessions.add_message(conn, session_id, "assistant", answer.text, trace_id=answer.trace_id)
         emit("final", final_payload(answer, standalone=standalone, condense_reason=condensed.reason,
@@ -132,14 +134,15 @@ def _run_turn_locked(services: Services, user: User, session_id: str, question: 
 
 
 def stream_turn(services: Services, user: User, session: dict, question: str,
-                provider: str | None) -> Iterator[str]:
+                provider: str | None, use_cache: bool = True) -> Iterator[str]:
     """Server-sent events for one turn: the session event, then whatever the worker thread emits."""
     events: queue.Queue = queue.Queue()
 
     def work() -> None:
         """Run the turn, then signal the end of the stream."""
         try:
-            run_turn(services, user, session["session_id"], question, provider, lambda e, d: events.put((e, d)))
+            run_turn(services, user, session["session_id"], question, provider, lambda e, d: events.put((e, d)),
+                     use_cache)
         finally:
             events.put(_DONE)
 
