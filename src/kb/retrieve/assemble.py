@@ -109,6 +109,23 @@ def _window(conn: sqlite3.Connection, section_id: str, lo: int, hi: int) -> tupl
     return text, sum(r["token_count"] for r in rows), min(r["page_start"] for r in rows), max(r["page_end"] for r in rows)
 
 
+def window_text(conn: sqlite3.Connection, section_id: str, max_tokens: int) -> tuple[str, int, int, int, int]:
+    """The first chunks of a section up to about max_tokens (at least one): text, tokens, page range and
+    the last chunk index read."""
+    rows = conn.execute("SELECT chunk_index, text, token_count, page_start, page_end FROM chunks "
+                        "WHERE section_id = ? ORDER BY chunk_index", (section_id,)).fetchall()
+    taken, used = [], 0
+    for r in rows:
+        if taken and used + r["token_count"] > max_tokens:
+            break
+        taken.append(r)
+        used += r["token_count"]
+    if not taken:
+        return "", 0, 0, 0, 0
+    return ("\n\n".join(r["text"] for r in taken), used, min(r["page_start"] for r in taken),
+            max(r["page_end"] for r in taken), taken[-1]["chunk_index"])
+
+
 def near_duplicate(a: str, b: str, ratio: float = NEAR_DUPLICATE_RATIO) -> bool:
     """Are two texts the same apart from small edits? Compared word by word, cheapest bounds first."""
     if a == b:

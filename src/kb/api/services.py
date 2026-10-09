@@ -51,7 +51,8 @@ class Services:
         """An Answerer for one request: shared models and providers, this request's connection."""
         retriever = Retriever(conn, self.client, self.settings.qdrant_collection, self.embedder, self.reranker)
         return Answerer(conn, retriever, self.providers, not_found_score=self.settings.not_found_score,
-                        provider=self.settings.llm_provider)
+                        provider=self.settings.llm_provider, refusal_retry=self.settings.refusal_retry)
+        # compare_read=self.settings.compare_read  — read step disabled (TO-5.1)
 
 
 def load_services(settings: Settings) -> Services:

@@ -81,6 +81,13 @@ def main(argv: list[str] | None = None) -> int:
     ask.add_argument("--no-stream", action="store_true", help="print the answer only when it is complete")
     ask.add_argument("--no-compare", action="store_true",
                      help="answer comparisons with one search instead of one search per side")
+    # Read step disabled (TO-5.1, TD-14):
+    # ask.add_argument("--compare-read", action="store_true",
+    #                  help="comparisons: let the model pick more sections of each guide from its table of "
+    #                       "contents (default: KB_COMPARE_READ)")
+    ask.add_argument("--no-refusal-retry", action="store_true",
+                     help="do not ask again with the best sources only when the model finds no answer "
+                          "(the retry is on unless KB_REFUSAL_RETRY=false)")
     eval_answers = commands.add_parser("eval-answers", help="evaluate generated answers against the golden set")
     eval_answers.add_argument("--questions", help="comma-separated golden ids, e.g. q001,q012 (default: all)")
     eval_answers.add_argument("--types", help="comma-separated question types: lookup, howto, compare, unanswerable")
@@ -89,6 +96,12 @@ def main(argv: list[str] | None = None) -> int:
                               help="LLM provider for the answers (default: KB_LLM_PROVIDER, auto)")
     eval_answers.add_argument("--no-compare", action="store_true",
                               help="answer comparisons with one search (baseline for the comparison path)")
+    # Read step disabled (TO-5.1, TD-14):
+    # eval_answers.add_argument("--compare-read", action="store_true",
+    #                           help="comparisons: read more sections chosen from each guide's table of contents "
+    #                                "(default: KB_COMPARE_READ)")
+    eval_answers.add_argument("--no-refusal-retry", action="store_true",
+                              help="no second attempt after a refusal (baseline for the refusal retry)")
     eval_answers.add_argument("--details", action="store_true",
                               help="also print missing strings and unsupported claims per question")
     eval_cmd = commands.add_parser("eval", help="evaluate retrieval configurations against the golden set")

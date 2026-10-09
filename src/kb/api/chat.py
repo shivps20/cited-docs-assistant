@@ -5,6 +5,9 @@ queue; the HTTP response streams them as they arrive:
 
     session   {session_id, sticky_release}                       always first
     status    {stage: queued | condensing | searching, ...}      progress (queued: waiting for another turn)
+              {stage: comparing | searching_side | reading, ...} a comparison: being split, each side
+                                                                 searched ({side, index, total}), more
+                                                                 sections read ({sections})
     context   {sources: [...]}                                   context sent to the LLM (for the UI panel)
     token     {text}                                             streamed answer pieces (raw model output)
     final     {answer, status, sources, references, ...}         the cleaned answer: replaces the streamed text
@@ -112,7 +115,8 @@ def _run_turn_locked(services: Services, user: User, session_id: str, question: 
         answer = services.make_answerer(conn).answer(
             request, provider=provider, asked=question, pre_stages=pre_stages,
             on_token=lambda piece: emit("token", {"text": piece}),
-            on_context=lambda units: emit("context", context_payload(units)))
+            on_context=lambda units: emit("context", context_payload(units)),
+            on_status=lambda stage, data: emit("status", {"stage": stage, **data}))
 
         message_id = sessions.add_message(conn, session_id, "assistant", answer.text, trace_id=answer.trace_id)
         emit("final", final_payload(answer, standalone=standalone, condense_reason=condensed.reason,

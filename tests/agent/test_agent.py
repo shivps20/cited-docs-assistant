@@ -5,13 +5,15 @@ import pytest
 from kb.agent.compare import (
     Side,
     decompose,
+    parse_reads,
     parse_sides,
+    read_messages,
     retrieve_sides,
     side_release,
     without_labels,
 )
 from kb.agent.route import route_question
-from kb.agent.tools import KBTools
+from kb.agent.tools import KBTools, OutlineEntry
 from kb.answer.pipeline import Answerer
 from kb.core.db import connect, migrate
 from kb.core.tracing import Tracer
@@ -208,9 +210,14 @@ def test_comparison_searches_each_side_and_names_the_sides(conn):
     retriever = RecordingRetriever({"certificates for SAML on Cloud?": side_result("cloud#2", 0.95),
                                     "certificates for HTTPS on premises?": side_result("onprem#3", 0.80)})
     llm = FakeLLM()
+    statuses = []
     answer = Answerer(conn, retriever, {"ollama": llm}, planner=planner).answer(
-        SearchRequest("Certificates for SAML on Cloud versus HTTPS on premises?"))
+        SearchRequest("Certificates for SAML on Cloud versus HTTPS on premises?"),
+        on_status=lambda stage, data: statuses.append((stage, data)))
     assert (answer.route, answer.sides, answer.status) == ("compare", ["Cloud", "On premises"], "answered")
+    assert statuses == [("comparing", {}),
+                        ("searching_side", {"side": "Cloud", "index": 1, "total": 2}),
+                        ("searching_side", {"side": "On premises", "index": 2, "total": 2})]
     assert [s.doc_id for s in answer.sources] == ["cloud", "onprem"]
     assert [side for _, side in retriever.requests] == ["Cloud", "On premises"]
     prompt = llm.messages[1]["content"]
@@ -225,8 +232,11 @@ def test_comparison_searches_each_side_and_names_the_sides(conn):
 def test_comparison_falls_back_to_one_search_when_it_cannot_be_split(conn):
     question = "Certificates for SAML on Cloud versus HTTPS on premises?"
     retriever = RecordingRetriever({question: side_result("cloud#2", 0.95)})
-    answer = Answerer(conn, retriever, {"ollama": FakeLLM()}, planner=FakePlanner("no json")).answer(SearchRequest(question))
+    statuses = []
+    answer = Answerer(conn, retriever, {"ollama": FakeLLM()}, planner=FakePlanner("no json")).answer(
+        SearchRequest(question), on_status=lambda stage, data: statuses.append(stage))
     assert answer.route == "answer" and len(retriever.requests) == 1
+    assert statuses == ["comparing"]                            # no per-side searches after a failed split
     assert any("one search" in n for n in answer.notices)
     off = Answerer(conn, retriever, {"ollama": FakeLLM()}, planner=FakePlanner("unused"), compare=False)
     assert off.answer(SearchRequest(question)).notices == [] and off.planner.calls == []
@@ -240,3 +250,88 @@ def test_retrieve_sides_puts_reranked_candidates_first(conn):
         tools = KBTools(conn, RecordingRetriever({"qa": low, "qb": unreranked}), SearchRequest("q"), trace)
         result = retrieve_sides(tools, "q", [Side("A", "qa"), Side("B", "qb")])
     assert result.candidates[0].rerank_score == 0.05            # the gate still sees the (low) rerank score
+
+
+# ---------------------------------------------------------------------------------- read step
+
+def add_sections(conn, doc, rows):
+    """rows: (number, heading_path, level, text, tokens); chunks are added for sections over 600 tokens."""
+    with conn:
+        for i, (num, path, level, text, tokens) in enumerate(rows, start=1):
+            conn.execute("INSERT INTO sections (section_id, doc_id, heading_path, level, ordinal, page_start, page_end, "
+                         "text, token_count) VALUES (?, ?, ?, ?, ?, 3, 4, ?, ?)",
+                         (f"{doc}#{num}", doc, path, level, i, text, tokens))
+            if tokens > 600:
+                for j in range(4):
+                    conn.execute("INSERT INTO chunks (chunk_id, doc_id, section_id, chunk_index, header, text, "
+                                 "content_type, page_start, page_end, token_count) VALUES (?, ?, ?, ?, 'h', ?, 'text', "
+                                 "?, ?, 250)", (f"{doc}#{num}#{j}", doc, f"{doc}#{num}", j, f"part {j}", 5 + j, 5 + j))
+
+
+def test_outline_and_read_section_check_access(conn):
+    add_sections(conn, "public", [("2", "2 Setup", 1, "setup", 20), ("2.1", "2 Setup > 2.1 Ports", 2, "long", 1000)])
+    with Tracer(conn, "q") as trace:
+        tools = KBTools(conn, RecordingRetriever({}), SearchRequest("q", groups=["all"]), trace)
+        assert [(e.number, e.heading, e.level) for e in tools.outline("public")] == \
+            [("1", "1 Intro", 1), ("2", "2 Setup", 1), ("2.1", "2.1 Ports", 2)]
+        assert tools.outline("secret") == [] and tools.outline("old") == []      # other group / superseded
+        assert tools.read_section("secret#1") is None
+        small = tools.read_section("public#2", side="A")
+        assert (small.text, small.side, small.kind, small.citation) == ("setup", "A", "section", "Public, Section 2, pp. 3-4")
+        big = tools.read_section("public#2.1")                       # first chunks up to ~600 tokens
+        assert (big.kind, big.text, big.tokens, big.window) == ("window", "part 0\n\npart 1", 500, (0, 1))
+
+
+def outline_items():
+    """Outline items for two sides: four sections of guide g, one of guide h."""
+    entries = [OutlineEntry("g#1", "1", "1 Intro", 1, 10), OutlineEntry("g#2", "2", "2 Ports", 1, 10),
+               OutlineEntry("g#3", "3", "3 Bugs", 1, 10), OutlineEntry("g#4", "4", "4 Notes", 1, 10)]
+    return [("A", "R2021x", "Guide R2021x", entries), ("B", "R2019x", "Guide R2019x",
+                                                         [OutlineEntry("h#1", "1", "1 Intro", 1, 10)])]
+
+
+def test_parse_reads_keeps_listed_unprovided_sections_within_the_limit():
+    reply = json.dumps({"read": [{"item": "A", "section": "1"}, {"item": "A", "section": "2."},
+                                 {"item": "a", "section": "3"}, {"item": "A", "section": "4"},
+                                 {"item": "B", "section": "9"}, {"item": "C", "section": "1"}, "junk"]})
+    assert parse_reads(reply, outline_items(), have={"g#1"}) == [("R2021x", "g#2"), ("R2021x", "g#3")]
+    assert parse_reads("not json", outline_items(), set()) is None
+    assert parse_reads('{"read": []}', outline_items(), set()) == []
+    prompt = read_messages("q?", outline_items(), {"g#1"})[1]["content"]
+    assert "* 1 Intro" in prompt and "  2 Ports" in prompt and "Item B: R2019x" in prompt
+
+
+class SequencePlanner:
+    """Replies from a list, one per call (decomposition first, then the read step)."""
+
+    def __init__(self, *replies):
+        """Keep the replies to give, in order."""
+        self.replies, self.calls = list(replies), 0
+
+    def generate(self, messages, *, on_token=None, json_format=False):
+        """The next reply."""
+        self.calls += 1
+        return Generation(self.replies.pop(0), "ollama", "qwen", 0.5)
+
+
+@pytest.mark.skip(reason="read step disabled in the answer flow (TO-5.1, TD-14); re-enable with a larger model")
+def test_comparison_read_step_adds_the_chosen_sections(conn):
+    add_sections(conn, "public", [("2", "2 Setup", 1, "setup text", 20)])
+    planner = SequencePlanner('{"sides": [{"label": "Cloud", "query": "certificates on Cloud?"},'
+                              ' {"label": "On premises", "query": "certificates on premises?"}]}',
+                              '{"read": [{"item": "A", "section": "2"}, {"item": "B", "section": "1"}]}')
+    retriever = RecordingRetriever({"certificates on Cloud?": side_result("public#1", 0.95),
+                                    "certificates on premises?": side_result("secret#1", 0.80)})
+    statuses = []
+    answer = Answerer(conn, retriever, {"ollama": FakeLLM()}, planner=planner, compare_read=True).answer(
+        SearchRequest("Certificates on Cloud versus on premises?"), on_status=lambda s, d: statuses.append((s, d)))
+    # the user (group 'all') cannot see 'secret', so only side A gets an outline and a read
+    assert [(u.section_id, u.side) for u in answer.context][-1] == ("public#2", "Cloud")
+    assert answer.read_sections == 1 and planner.calls == 2
+    assert ("reading", {"sections": ["Public, Section 2, pp. 3-4"]}) in statuses
+    read = conn.execute("SELECT data FROM trace_stages WHERE trace_id = ? AND stage = 'read'", (answer.trace_id,)).fetchone()
+    assert json.loads(read["data"])["chosen"] == ["public#2"]
+    off = Answerer(conn, retriever, {"ollama": FakeLLM()},
+                   planner=SequencePlanner('{"sides": [{"label": "Cloud", "query": "certificates on Cloud?"},'
+                                           ' {"label": "On premises", "query": "certificates on premises?"}]}'))
+    assert off.answer(SearchRequest("Certificates on Cloud versus on premises?")).read_sections == 0

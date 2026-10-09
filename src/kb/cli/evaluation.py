@@ -171,7 +171,9 @@ def eval_answers_command(args) -> int:
     retriever = Retriever(conn, get_client(), s.qdrant_collection, embedder, reranker)
     providers = build_providers(s)
     answerer = Answerer(conn, retriever, providers, not_found_score=s.not_found_score,
-                        provider=args.provider or s.llm_provider, compare=not args.no_compare)
+                        provider=args.provider or s.llm_provider, compare=not args.no_compare,
+                        refusal_retry=s.refusal_retry and not args.no_refusal_retry)
+    # compare_read=s.compare_read or args.compare_read  — read step disabled (TO-5.1)
     judge = None if args.no_judge else OllamaProvider(
         s.ollama_host, s.llm_model, num_ctx=s.llm_num_ctx, keep_alive=s.llm_keep_alive, temperature=0.0,
         max_tokens=1500)
@@ -194,10 +196,11 @@ def eval_answers_command(args) -> int:
         status = r.status if r.status == "answered" else f"refused/{r.refused_by}"
         faith = "-" if r.faithfulness is None else f"{r.faithfulness:.2f}"
         flags = "".join(f for f, on in (("C", r.route == "compare"), ("M", r.no_markers), ("N", r.dropped_not_found),
-                                        ("T", r.meta_talk)) if on)
+                                        ("T", r.meta_talk), ("R", r.retried)) if on)
+        # ("S", r.read_sections > 0): sections read from the outline — read step disabled (TO-5.1)
         print(f"{r.qid} {r.qtype:<12} {verdict} {status:<14} must {pct(r.must_found, r.must_total):>5} "
               f"art {pct(r.ref_found, r.ref_total):>4} url {pct(r.urls_found, r.urls_total):>4} "
-              f"cite {pct(r.cited_correct, r.cited):>4} faith {faith:>4} {flags:<3} {r.total_ms / 1000:5.1f} s",
+              f"cite {pct(r.cited_correct, r.cited):>4} faith {faith:>4} {flags:<4} {r.total_ms / 1000:5.1f} s",
               flush=True)
         if args.details:
             for m in r.missing:
@@ -208,7 +211,8 @@ def eval_answers_command(args) -> int:
                 print(f"      judge error: {r.judge_error}")
 
     print(f"{'qid':<4} {'type':<12} {'':3} {'status':<14} {'must':>10} {'art':>7} {'url':>8} {'cite':>9} "
-          f"{'faith':>10}  flags (C compared per side, M no [n], N not-found removed, T talks about sources)")
+          f"{'faith':>10}  flags (C compared per side, M no [n], N not-found removed, T talks about sources, "
+          f"R answered on retry)")
     try:
         report = run_answer_eval(answer_fn, golden, None if args.no_judge else judge_fn, progress)
     except LLMError as e:
@@ -232,6 +236,8 @@ def eval_answers_command(args) -> int:
           f"talks about sources {f(m['meta_talk'])}  invalid citations {m['invalid_citations']}")
     if m["wrong_refusals"]:
         print(f"  WRONG REFUSALS: {', '.join(m['wrong_refusals'])}")
+    if m.get("retried"):
+        print(f"  answered on the retry with fewer sources: {', '.join(m['retried'])}")
     print(f"Unanswerable ({m['unanswerable']}): refused {f(m['refused'])} "
           f"(gate {m['refused_by_gate']}, LLM {m['refused_by_llm']})")
     if m["wrong_answers"]:
