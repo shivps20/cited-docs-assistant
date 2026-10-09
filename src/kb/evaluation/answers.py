@@ -75,6 +75,9 @@ class AnswerResult:
     route: str = "answer"                 # answer | compare (searched once per side)
     sides: list[str] = field(default_factory=list)
     retried: bool = False                 # answered on the second attempt after a refusal (TD-23)
+    commands_total: int = 0               # commands / code in the answer (TD-12 command check)
+    commands_unverified: list[str] = field(default_factory=list)   # not found word for word in the context
+    claims_by_values: int = 0             # claims supported only by the value check (judge, Phase 7)
     read_sections: int = 0                # sections added by the comparison read step
 
 
@@ -101,6 +104,27 @@ def _on_golden(source, golden_sources: list[dict]) -> bool:
     return any(_overlaps(doc, start, end, golden_sources) for doc, start, end in _locations(source))
 
 
+_CODE_BLOCK = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)
+_INLINE_CODE = re.compile(r"`([^`\n]{4,})`")
+
+
+def answer_commands(text: str) -> list[str]:
+    """Commands and code in an answer: every non-empty line of a ``` block, and `inline code` of 4+
+    characters (shorter spans are names rather than commands)."""
+    commands = [line.strip() for block in _CODE_BLOCK.findall(text) for line in block.splitlines() if line.strip()]
+    outside = _CODE_BLOCK.sub(" ", text)
+    commands += [c.strip() for c in _INLINE_CODE.findall(outside)]
+    return list(dict.fromkeys(c for c in commands if len(c) >= 4))
+
+
+def unverified_commands(text: str, context_text: str) -> tuple[int, list[str]]:
+    """(number of commands, those not found word for word in the context): the deterministic TD-12
+    check that catches a changed value in a command (octreedepth 6 instead of 5)."""
+    commands = answer_commands(text)
+    haystack = normalise(context_text)
+    return len(commands), [c for c in commands if normalise(c) not in haystack]
+
+
 def score_answer(q: dict, answer: Answer, verdict: Verdict | None, total_ms: float) -> AnswerResult:
     """Score one Answer against its golden question (and the judge's verdict, if any)."""
     answerable = bool(q["sources"])
@@ -117,6 +141,7 @@ def score_answer(q: dict, answer: Answer, verdict: Verdict | None, total_ms: flo
     cited_docs = {doc for s in answer.sources for doc, _, _ in _locations(s)}
     cited_markers = bool(re.search(r"\[\d+\]", text))
     timings = answer.timings_ms
+    commands_total, commands_missing = unverified_commands(text, "\n".join(u.text for u in answer.context))
 
     return AnswerResult(
         qid=q["id"], qtype=q["type"], answerable=answerable, status=answer.status, refused_by=answer.refused_by,
@@ -143,6 +168,8 @@ def score_answer(q: dict, answer: Answer, verdict: Verdict | None, total_ms: flo
         sources=[s.line for s in answer.sources], trace_id=answer.trace_id,
         route=answer.route, sides=list(answer.sides), retried=answer.retried_from > 0,
         read_sections=answer.read_sections,
+        commands_total=commands_total, commands_unverified=commands_missing,
+        claims_by_values=sum(1 for c in verdict.claims if c.by_values) if verdict else 0,
     )
 
 
@@ -196,6 +223,10 @@ def summarize_answers(results: list[AnswerResult]) -> dict:
         "meta_talk": share(answered, lambda r: r.meta_talk),
         "invalid_citations": sum(r.invalid_citations for r in answered),
         "retried": [r.qid for r in results if r.retried],      # answered only on the second attempt
+        "commands_verified": _ratio(sum(r.commands_total - len(r.commands_unverified) for r in answered),
+                                    sum(r.commands_total for r in answered)),
+        "commands_unverified": sum(len(r.commands_unverified) for r in answered),
+        "claims_by_values": sum(r.claims_by_values for r in answered),
         # unanswerable questions
         "refused": share(unans, lambda r: r.status != ANSWERED),
         "wrong_answers": [r.qid for r in unans if r.status == ANSWERED],

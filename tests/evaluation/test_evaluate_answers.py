@@ -1,13 +1,16 @@
 import pytest
 
 from kb.answer.pipeline import Answer, Source
-from kb.evaluation.answers import contains, run_answer_eval
+from kb.evaluation.answers import answer_commands, contains, run_answer_eval, unverified_commands
 from kb.llm.judge import (
     Claim,
     Verdict,
+    distinctive_values,
     evidence_in_sources,
+    judge_faithfulness,
     judge_messages,
     parse_verdict,
+    split_answer,
 )
 from kb.llm.prompts import NOT_FOUND
 from kb.llm.providers import Generation
@@ -142,3 +145,62 @@ def test_judge_sees_sources_and_answer_without_markers():
     messages = judge_messages("Depth is 6 [1].", [unit("index", (20, 22))])
     assert "SOURCES:" in messages[1]["content"] and "Depth is 6 ." in messages[1]["content"]
     assert '"supported"' in messages[0]["content"]
+
+
+ORA_TEXT = "Errors: ORA-01157 cannot identify data file; ORA-01110 data file 4. Edit config/listener.ora."
+
+
+def test_values_support_a_claim_without_a_usable_quote():
+    reply = ('{"claims": ['
+             '{"claim": "The errors ORA-01157 and ORA-01110 appear; edit config/listener.ora", "evidence": ""},'
+             '{"claim": "Error ORA-09999 appears", "evidence": ""},'
+             '{"claim": "Restart the service", "evidence": ""}]}')
+    v = parse_verdict(reply, ORA_TEXT)
+    assert [c.supported for c in v.claims] == [True, False, False]
+    assert [c.by_values for c in v.claims] == [True, False, False]
+    assert distinctive_values("port 9040 and `srvctl start db`") == ["9040", "srvctl start db"]
+
+
+def test_long_answers_are_split_between_paragraphs_with_code_blocks_whole():
+    long = "a" * 900 + "\n\n```\nline 1\n\nline 2\n```\n\n" + "b" * 900
+    parts = split_answer(long, limit=1000)
+    assert len(parts) == 2 and parts[0].endswith("```") and "line 1\n\nline 2" in parts[0]
+    assert parts[1] == "b" * 900 and split_answer("short") == ["short"]
+
+
+class PartJudge:
+    """A judge that returns one supported claim per part it is asked about."""
+
+    def __init__(self):
+        """No calls yet."""
+        self.calls = 0
+
+    def generate(self, messages, *, on_token=None, json_format=False, json_schema=None):
+        """One claim quoting the context."""
+        self.calls += 1
+        reply = '{"claims": [{"claim": "part %d", "evidence": "t", "supported": true}]}' % self.calls
+        return Generation(reply, "ollama", "qwen", 0.5)
+
+
+def test_judge_merges_the_claims_of_every_part():
+    judge = PartJudge()
+    v = judge_faithfulness(judge, "x" * 1000 + "\n\n" + "y" * 1000, [unit("doc", (1, 1))])
+    assert judge.calls == 2 and [c.text for c in v.claims] == ["part 1", "part 2"]
+    assert v.faithfulness == 1.0 and v.seconds == 1.0 and v.error is None
+
+
+def test_commands_must_occur_word_for_word_in_the_context():
+    text = "Run:\n```bash\nsrvctl start db -d X\nlsnrctl status\n```\nThen set `octreedepth 6`; see `ls`."
+    assert answer_commands(text) == ["srvctl start db -d X", "lsnrctl status", "octreedepth 6"]
+    total, missing = unverified_commands(text, "srvctl  start db -d X ... `octreedepth 5` ... lsnrctl status")
+    assert total == 3 and missing == ["octreedepth 6"]
+
+
+def test_command_check_is_summarised():
+    context = [unit("launcher", (4, 6))]
+    context[0].text = "Run `kb restart --all` to apply."
+    a = answer("Run `kb restart --all` [1], then `kb purge --hard` [1].", sources=[source(1, "launcher", (5, 5))],
+               context=context)
+    report = run_answer_eval(lambda q: a, GOLDEN[:1])
+    assert report["summary"]["commands_verified"] == 0.5 and report["summary"]["commands_unverified"] == 1
+    assert report["questions"][0]["commands_unverified"] == ["kb purge --hard"]

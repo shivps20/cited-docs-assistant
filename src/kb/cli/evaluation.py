@@ -5,6 +5,8 @@ import sys
 from kb.core.config import get_settings
 from kb.ingest.manifest import load_manifest
 
+JUDGE_MAX_TOKENS = 3000   # the judge lists every claim with a quote; 1,500 cut off long answers (TD-12)
+
 
 def eval_command(args) -> int:
     """`kb eval`: run the golden questions through each retrieval configuration and print the metrics."""
@@ -182,7 +184,7 @@ def eval_answers_command(args) -> int:
                         provider=answer_model, compare=not args.no_compare,
                         refusal_retry=s.refusal_retry and not args.no_refusal_retry)
     judge = None if args.no_judge else (models.provider(judge_model) if args.judge_model
-                                        else models.for_role("judge"))
+                                        else models.for_role("judge", max_output_tokens=JUDGE_MAX_TOKENS))
 
     def answer_fn(question: str):
         """Answer one golden question with full access and no release filter."""
@@ -213,6 +215,8 @@ def eval_answers_command(args) -> int:
                 print(f"      missing: {m!r}")
             for c in r.unsupported:
                 print(f"      unsupported: {c}")
+            for c in r.commands_unverified:
+                print(f"      command not in context: {c}")
             if r.judge_error:
                 print(f"      judge error: {r.judge_error}")
 
@@ -237,7 +241,9 @@ def eval_answers_command(args) -> int:
     print(f"  citations: precision {f(m['citation_precision'])}  document recall {f(m['citation_doc_recall'])}  "
           f"context had a golden source {f(m['context_hit'])}")
     print(f"  faithfulness {f(m['faithfulness'])} (fully faithful {f(m['fully_faithful'])}, "
-          f"judge errors {m['judge_errors']})")
+          f"judge errors {m['judge_errors']}, claims supported by values only {m['claims_by_values']})")
+    print(f"  commands in answers found word for word in the context: {f(m['commands_verified'])} "
+          f"({m['commands_unverified']} not found)")
     print(f"  style: no [n] markers {f(m['no_markers'])}  not-found sentence removed {f(m['dropped_not_found'])}  "
           f"talks about sources {f(m['meta_talk'])}  invalid citations {m['invalid_citations']}")
     if m["wrong_refusals"]:
