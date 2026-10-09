@@ -15,6 +15,7 @@ from kb.cli.ingest import (
     show_coverage,
     show_status,
 )
+from kb.cli.models import models_list
 from kb.cli.search import ask_command, search_command
 from kb.cli.serve import serve_command
 
@@ -29,6 +30,9 @@ def main(argv: list[str] | None = None) -> int:
     manifest = commands.add_parser("manifest", help="document manifest").add_subparsers(dest="action", required=True)
     manifest.add_parser("validate", help="validate the manifest and list documents")
     manifest.add_parser("scan", help="append draft rows for files not yet in the manifest")
+    models = commands.add_parser("models", help="language model catalogue (config/models.yaml)").add_subparsers(
+        dest="action", required=True)
+    models.add_parser("list", help="validate the catalogue and list models, roles and keys")
     parse = commands.add_parser("parse", help="parse documents with Docling and cache the result")
     parse.add_argument("--doc", action="append", metavar="DOC_ID", help="only this document (repeatable)")
     parse.add_argument("--force", action="store_true", help="re-parse even if a cached result exists")
@@ -124,6 +128,8 @@ def _run(args: argparse.Namespace) -> int:
     """Run the chosen subcommand."""
     if args.command == "manifest":
         return {"validate": manifest_validate, "scan": manifest_scan}[args.action]()
+    if args.command == "models":
+        return {"list": models_list}[args.action]()
     if args.command == "parse":
         return parse_documents(args.doc, args.force)
     if args.command == "status":

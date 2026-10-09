@@ -165,6 +165,14 @@ uv run kb search "How do I enable single sign-on?" --context --show 5         # 
 uv run kb search "..." --rerank-top 0 --min-score 0.3                           # rerank all, drop weak context
 ```
 
+### `kb models` — model catalogue
+
+| Command | What it does |
+|---|---|
+| `uv run kb models list` | Validate `config/models.yaml` (every problem listed at once) and show each model: adapter, local / external, whether its key is set, context and output size, model id and the roles it has |
+
+Without `config/models.yaml` it shows the catalogue built from the older settings (`LLM_MODEL`, `OPENAI_*`).
+
 ### `kb ask` — answer a question with citations
 
 | Option | Default | Meaning |

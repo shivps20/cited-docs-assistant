@@ -112,7 +112,7 @@ src/kb/
   ingest/          manifest · parse (Docling) · structure (sections) · chunk · index (Qdrant)
   store/           embed (bge-m3 dense + sparse) · vectorstore (Qdrant collection)
   retrieve/        search (filters, hybrid) · rerank · assemble · pipeline · gate · release
-  llm/             providers (Ollama, OpenAI) · prompts (prompt, citations) · condense (follow-ups) · judge
+  llm/             catalogue (models.yaml) · providers (Ollama, OpenAI) · prompts (prompt, citations) · condense (follow-ups) · judge
   agent/           route (comparison?) · tools (search_kb, get_section, outline, read_section; access-checked) · compare (split, one search per side; read step disabled)
   answer/          pipeline: route -> retrieve -> gate -> LLM -> citations (-> retry on a refusal), in one trace
   evaluation/      coverage · retrieval (kb eval) · answers (kb eval-answers)

@@ -1,0 +1,72 @@
+# Language models and which job each one does (example).
+# Copy to models.yaml (git-ignored) and adapt; KB_MODELS_PATH points elsewhere if needed.
+# Without models.yaml the assistant uses the local Ollama model (LLM_MODEL), plus OpenAI when
+# OPENAI_API_KEY and OPENAI_MODEL are set: the behaviour before this file existed.
+#
+# Keys never go in this file: api_key_env names the environment variable, and the key itself
+# stays in .env. A model whose key is not set is listed as "no key" by `kb models list`.
+#
+# Privacy: an external model only ever sees sources whose manifest row has external_ok = true.
+# When a context contains anything else, the `fallback` model (which must be local) answers.
+# Planner (comparison split) and condenser (follow-up rewrite) see the raw question and the chat
+# history, so keep them local unless every document may leave the machine.
+#
+# Check the file with:  uv run kb models list
+
+roles:
+  answer: local-qwen        # writes the answers (per question: --model / the chat's model menu)
+  planner: local-qwen       # splits comparison questions into sides
+  condenser: local-qwen     # rewrites follow-up questions
+  judge: local-qwen         # faithfulness judge in kb eval-answers
+
+fallback: local-qwen        # local model used when an external one may not see the context
+
+models:
+  local-qwen:
+    adapter: ollama
+    model: qwen2.5:7b-instruct
+    location: local
+    context_tokens: 8192
+    max_output_tokens: 1500
+    temperature: 0.0          # same answer for the same question and context
+    refusal_retry: true       # ask again with the best sources when the 7B model gives up (TD-23)
+
+  gpt:
+    adapter: openai_compatible          # no base_url: the OpenAI API
+    model: gpt-6.1-sol
+    location: external
+    api_key_env: OPENAI_API_KEY
+    context_tokens: 200000
+    max_output_tokens: 4000
+    fallback: local-qwen
+
+  mistral-large:
+    adapter: openai_compatible
+    base_url: https://api.mistral.ai/v1
+    model: mistral-large-latest
+    location: external
+    api_key_env: MISTRAL_API_KEY
+    context_tokens: 128000
+    max_output_tokens: 4000
+    fallback: local-qwen
+
+  gemini-pro:
+    adapter: openai_compatible
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+    model: gemini-3.1-pro-preview
+    location: external
+    api_key_env: GEMINI_API_KEY
+    context_tokens: 200000
+    max_output_tokens: 4000
+    fallback: local-qwen
+
+  claude-opus:
+    adapter: anthropic
+    model: claude-opus-5-5
+    location: external
+    api_key_env: ANTHROPIC_API_KEY
+    context_tokens: 200000
+    max_output_tokens: 4000
+    effort: medium            # low | medium | high | xhigh | max (thinking is always on)
+    refusal_retry: true       # built for the 7B model; switch off per model if the evaluation shows no need
+    fallback: local-qwen

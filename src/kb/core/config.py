@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     # Organisation-specific text rules and the golden question set (both local, git-ignored)
     domain_path: Path = Field(Path("config/domain.yaml"), validation_alias="KB_DOMAIN_PATH")
     golden_path: Path = Field(Path("eval/golden.json"), validation_alias="KB_GOLDEN_PATH")
+    # Language models and which job each one does (Phase 6; local, git-ignored). Without the file:
+    # the local Ollama model, plus OpenAI when OPENAI_* is set (kb.llm.catalogue.default_catalogue).
+    models_path: Path = Field(Path("config/models.yaml"), validation_alias="KB_MODELS_PATH")
 
     # Chat API (kb serve). Loopback only by default: users are not authenticated.
     api_host: str = Field("127.0.0.1", validation_alias="KB_API_HOST")
@@ -71,7 +74,7 @@ class Settings(BaseSettings):
     openai_model: str = ""
 
     @field_validator("db_path", "docs_dir", "manifest_path", "parsed_dir", "users_path", "domain_path",
-                     "golden_path", "embed_model_path",
+                     "golden_path", "models_path", "embed_model_path",
                      "rerank_model_path", "docling_artifacts_path")
     @classmethod
     def _resolve_from_root(cls, path: Path) -> Path:
