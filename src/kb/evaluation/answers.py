@@ -26,6 +26,7 @@ from dataclasses import asdict, dataclass, field
 from kb.answer.pipeline import ANSWERED, Answer
 from kb.core.domain import get_domain
 from kb.evaluation.retrieval import _overlaps, _percentile
+from kb.ingest.manifest import display_path
 from kb.llm.judge import Verdict
 
 URL = re.compile(r"https?://[^\s)\]>,;'\"]+")
@@ -172,7 +173,8 @@ def score_answer(q: dict, answer: Answer, verdict: Verdict | None, total_ms: flo
         unsupported=verdict.unsupported if verdict else [],
         judge_error=verdict.error if verdict else None,
         answer=answer.text, raw_output=answer.generation.text if answer.generation else "",
-        sources=[s.line for s in answer.sources], trace_id=answer.trace_id,
+        sources=[f"{s.line} | {display_path(s.path)}" if s.path else s.line for s in answer.sources],
+        trace_id=answer.trace_id,
         route=answer.route, sides=list(answer.sides), retried=answer.retried_from > 0,
         read_sections=answer.read_sections,
         commands_total=commands_total, commands_unverified=commands_missing,

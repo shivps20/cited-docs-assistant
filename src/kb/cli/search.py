@@ -3,6 +3,7 @@
 import sys
 
 from kb.core.config import get_settings
+from kb.ingest.manifest import display_path
 
 
 def _parse_groups(values: list[str] | None) -> list[str]:
@@ -54,6 +55,8 @@ def search_command(args) -> int:
     print(f"\nassembled context: {len(result.context)} units, {sum(u.tokens for u in result.context)} tokens")
     for i, u in enumerate(result.context, start=1):
         print(f"  [{i}] {u.kind:<7} {u.tokens:>5} tok  {u.citation}")
+        if u.source_path:
+            print(f"      {display_path(u.source_path)}")
         for s in u.same_text:
             print(f"      same text: {s.citation} (not sent again)")
         if args.context:
@@ -127,7 +130,8 @@ def ask_command(args) -> int:
         print("--- context sent to the LLM ---")
         for i, u in enumerate(context, start=1):
             same = f"  same text: {'; '.join(s.citation for s in u.same_text)}" if u.same_text else ""
-            print(f"\n[{i}] {u.citation}  ({u.tokens} tokens){same}\n{u.text}")
+            where = f"\n    {display_path(u.source_path)}" if u.source_path else ""
+            print(f"\n[{i}] {u.citation}  ({u.tokens} tokens){same}{where}\n{u.text}")
         print("\n--- end of context ---\n")
 
     try:
@@ -145,6 +149,8 @@ def ask_command(args) -> int:
         print("Sources:")
         for src in answer.sources:
             print(f"  {src.line}")
+            if src.path:
+                print(f"      {display_path(src.path)}")
         print()
     for notice in answer.notices:
         print(f"NOTE {notice}")

@@ -52,6 +52,19 @@ def doc_types() -> dict[str, str]:
     return {f".{t}": PARSED_FORMATS[f".{t}"] for t in get_settings().doc_types.split(",")}
 
 
+def display_path(stored: str) -> str:
+    """A source's file as answers show it (KB_SOURCE_PATH). stored = the manifest form (relative to
+    KB_DOCS_DIR, or absolute). full: the absolute path in the system's own form; relative: the stored relative
+    path, or only the file name for a document kept outside KB_DOCS_DIR (no disk layout revealed)."""
+    if not stored:
+        return ""
+    settings = get_settings()
+    path = Path(stored)
+    if settings.source_path == "relative":
+        return path.name if path.is_absolute() else stored
+    return str(path if path.is_absolute() else (settings.docs_dir / path).resolve())
+
+
 def manifest_path_for(path: Path, docs_dir: Path) -> str:
     """How a file is written in the manifest: relative to docs_dir when inside it, else absolute (posix)."""
     resolved, base = path.resolve(), docs_dir.resolve()

@@ -204,7 +204,7 @@ Without `config/models.yaml` it shows the catalogue built from the older setting
 | `--no-refusal-retry` | `KB_REFUSAL_RETRY` (on) | No second attempt with the best-matching sources when the model finds no answer |
 | `--no-cache` | `KB_ANSWER_CACHE` (on) | Neither read nor store the answer cache: always search and ask the model |
 
-After the answer it prints the sources, any notes (removed citations, provider choice, a comparison answered with one search, an answer found on the second attempt), the status (`answered`, or `not found` by the gate or by the LLM), timings and the trace ID.
+After the answer it prints the sources (each with its file path below it, full or relative per `KB_SOURCE_PATH`), any notes (removed citations, provider choice, a comparison answered with one search, an answer found on the second attempt), the status (`answered`, or `not found` by the gate or by the LLM), timings and the trace ID.
 
 ```bash
 uv run kb ask "How do I enable single sign-on?"

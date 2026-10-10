@@ -10,6 +10,7 @@ import sqlite3
 import uuid
 
 from kb.api.users import User
+from kb.ingest.manifest import display_path
 
 TITLE_CHARS = 80    # sessions are listed by their first question, cut to this length
 # Why an answer got a thumbs down: the last two say the "not found" decision was wrong (kb calibrate).
@@ -69,6 +70,9 @@ def list_messages(conn: sqlite3.Connection, session_id: str, user_id: str | None
     for r in rows:
         m = dict(r)
         m["sources"] = json.loads(m["sources"]) if m["sources"] else []
+        for source in m["sources"]:                         # stored in the manifest form; shown per KB_SOURCE_PATH
+            if isinstance(source, dict) and source.get("path"):
+                source["path"] = display_path(source["path"])
         messages.append(m)
     return messages
 

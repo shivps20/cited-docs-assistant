@@ -28,6 +28,7 @@ from kb.answer.pipeline import Answer
 from kb.api import sessions
 from kb.api.services import Services
 from kb.api.users import User
+from kb.ingest.manifest import display_path
 from kb.llm.condense import HISTORY_TURNS, condense, needs_condensing
 from kb.llm.providers import LLMError
 from kb.retrieve.assemble import ContextUnit
@@ -50,7 +51,7 @@ def context_payload(context: list[ContextUnit]) -> dict:
     return {"sources": [{"n": n, "citation": u.citation, "doc_id": u.doc_id, "title": u.title,
                          "section": u.section_number, "heading": u.heading, "pages": u.pages, "release": u.release,
                          "score": round(u.score, 4), "tokens": u.tokens, "text": u.text,
-                         "same_text": [s.citation for s in u.same_text]}
+                         "path": display_path(u.source_path), "same_text": [s.citation for s in u.same_text]}
                         for n, u in enumerate(context, start=1)]}
 
 
@@ -61,7 +62,8 @@ def final_payload(answer: Answer, *, standalone: str | None, condense_reason: st
     return {
         "answer": answer.text, "status": answer.status, "refused_by": answer.refused_by,
         "gate": {"decision": answer.gate.decision, "top_score": answer.gate.top_score, "explain": answer.gate.explain()},
-        "sources": [{"n": s.n, "line": s.line, "doc_id": s.doc_id, "title": s.title, "section": s.section,
+        "sources": [{"n": s.n, "line": s.line, "path": display_path(s.path), "doc_id": s.doc_id, "title": s.title,
+                     "section": s.section,
                      "heading": s.heading, "page_start": s.page_start, "page_end": s.page_end, "release": s.release,
                      "same_text": s.same_text}
                     for s in answer.sources],

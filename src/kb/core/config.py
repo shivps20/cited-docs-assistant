@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     # .doc / .ppt are converted to .docx / .pptx with LibreOffice before parsing (KB_SOFFICE, found if empty).
     doc_types: str = Field("pdf,pptx,ppt,docx,doc", validation_alias="KB_DOC_TYPES")
     soffice: str = Field("", validation_alias="KB_SOFFICE")
+    # How a source's file is shown in answers: full path (local use) or relative to KB_DOCS_DIR (a server:
+    # documents kept elsewhere then show only their file name). Display only: stored answers keep the manifest form.
+    source_path: Literal["full", "relative"] = Field("full", validation_alias="KB_SOURCE_PATH")
     manifest_path: Path = Field(Path("config/manifest.csv"), validation_alias="KB_MANIFEST_PATH")
     parsed_dir: Path = Field(Path("data/parsed"), validation_alias="KB_PARSED_DIR")
     users_path: Path = Field(Path("config/users.yaml"), validation_alias="KB_USERS_PATH")

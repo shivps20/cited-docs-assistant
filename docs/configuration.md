@@ -13,6 +13,7 @@ All settings come from `.env` (see [.env.example](../.env.example)) through `kb.
 | `KB_DOCS_DIR`, `KB_MANIFEST_PATH` | `data/documents`, `config/manifest.csv` | The documents folder (subfolders included; manifest paths are relative to it) and the manifest. Documents elsewhere are added with `kb manifest scan --folder PATH` and read in place (absolute paths in the manifest) |
 | `KB_DOC_TYPES` | `pdf,pptx,ppt,docx,doc` | File types picked up by `kb manifest scan` and accepted in the manifest. `.ppt` / `.doc` (old binary formats) are converted once to `.pptx` / `.docx` with LibreOffice before parsing, cached in `data/parsed/converted/` |
 | `KB_SOFFICE` | *(found automatically)* | Path to LibreOffice's `soffice` when it is not on the PATH or in `C:/Program Files/LibreOffice` |
+| `KB_SOURCE_PATH` | `full` | How every source shows its file (in `kb ask`, `kb search`, the chat's Sources and context panel, evaluation reports): `full` = the absolute path; `relative` = the path relative to `KB_DOCS_DIR`, or only the file name for a document kept elsewhere (for a server: no disk layout shown). Display only: stored answers, traces and the answer cache keep the manifest form, so switching it changes nothing else |
 | `EMBED_MODEL_PATH`, `RERANK_MODEL_PATH`, `DOCLING_ARTIFACTS_PATH` | `models/...` | Local models |
 | `HF_HUB_OFFLINE` | `1` | Never download models at runtime |
 | `KB_RERANK_TOP` | `20` | Candidates reranked per search (see [architecture.md](architecture.md#retrieval)) |

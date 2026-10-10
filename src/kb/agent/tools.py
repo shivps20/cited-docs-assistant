@@ -111,7 +111,8 @@ class KBTools:
         return ContextUnit(doc_id=row["doc_id"], title=row["title"], section_id=section_id, section_number=number,
                            heading_path=row["heading_path"], header=row["title"], page_start=start, page_end=end,
                            text=text, kind=kind, score=0.0, tokens=tokens, window=window,
-                           release=row["release_version"] or "", external_ok=bool(row["external_ok"]), side=side)
+                           release=row["release_version"] or "", external_ok=bool(row["external_ok"]), side=side,
+                           source_path=row["source_path"] or "")
 
     def _visible(self, doc_id: str) -> bool:
         """Is the document the latest edition and in one of the user's groups?"""
@@ -123,7 +124,8 @@ class KBTools:
         """The section row with its document's title, release and external_ok, if the user may see it."""
         row = self.conn.execute(
             "SELECT s.section_id, s.doc_id, s.heading_path, s.page_start, s.page_end, s.text, s.token_count, d.title, "
-            "d.allowed_groups, d.release_version, d.external_ok FROM sections s JOIN documents d ON d.doc_id = s.doc_id "
+            "d.allowed_groups, d.release_version, d.external_ok, d.source_path FROM sections s "
+            "JOIN documents d ON d.doc_id = s.doc_id "
             "WHERE s.section_id = ? AND d.is_latest = 1", (section_id,)).fetchone()
         if row is None or not set(json.loads(row["allowed_groups"] or "[]")) & set(self.groups):
             return None

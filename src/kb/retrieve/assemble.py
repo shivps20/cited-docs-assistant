@@ -136,6 +136,7 @@ class ContextUnit:
     external_ok: bool = False               # may this text be sent to an external LLM
     same_text: list[SameText] = field(default_factory=list)   # near-identical copies in other documents
     side: str = ""                          # comparisons: the side this unit was found for
+    source_path: str = ""                   # the document's file, as in the manifest (relative or absolute)
 
     @property
     def pages(self) -> str:
@@ -217,6 +218,7 @@ def assemble(conn: sqlite3.Connection, ranked: list[Candidate], *, max_units: in
              min_score: float | None = None) -> list[ContextUnit]:
     """min_score (reranker scale): skip chunks below it, and chunks that were not reranked."""
     units: list[ContextUnit] = []
+    paths: dict[str, str] = {}                  # doc_id -> source_path from the documents table
     for c in demote_front_matter(ranked):
         if min_score is not None and (c.rerank_score is None or c.rerank_score < min_score):
             continue
@@ -254,11 +256,15 @@ def assemble(conn: sqlite3.Connection, ranked: list[Candidate], *, max_units: in
             continue
         if len(units) >= max_units or used + tokens > max_tokens:
             continue
+        if c.doc_id not in paths:
+            row = conn.execute("SELECT source_path FROM documents WHERE doc_id = ?", (c.doc_id,)).fetchone()
+            paths[c.doc_id] = row["source_path"] if row else ""
         units.append(ContextUnit(
             doc_id=c.doc_id, title=c.title, section_id=c.section_id, section_number=c.section_number,
             heading_path=section["heading_path"], header=c.header, page_start=p_start, page_end=p_end,
             text=text, kind=kind, score=c.best_score, tokens=tokens, chunk_ids=[c.chunk_id], window=window,
             release=c.payload.get("release_label", ""), external_ok=bool(c.payload.get("external_ok", False)),
+            source_path=paths[c.doc_id],
         ))
     return units
 
