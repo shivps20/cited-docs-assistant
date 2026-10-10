@@ -199,6 +199,9 @@ def test_commands_must_occur_word_for_word_in_the_context():
     assert answer_commands(text) == ["srvctl start db -d X", "lsnrctl status", "octreedepth 6"]
     total, missing = unverified_commands(text, "srvctl  start db -d X ... `octreedepth 5` ... lsnrctl status")
     assert total == 3 and missing == ["octreedepth 6"]
+    # formatting is not drift: prompt spacing, punctuation and line breaks are ignored
+    wrapped = "Run:\n```\nMQL > tidy vault vplm;\nFILEGROUP [I1_DATA] (NAME=[I1_DATA],\n```"
+    assert unverified_commands(wrapped, "MQL> tidy vault vplm ;  FILEGROUP [I1_DATA]\n(NAME = [I1_DATA],") == (2, [])
 
 
 def test_command_check_is_summarised():

@@ -49,6 +49,7 @@ class Report:
     """An answer evaluation report: where it came from, how it was run, and its outcomes."""
     path: Path
     model: str              # answer model profile (or the LLM model for reports from before Phase 6)
+    llm_model: str          # the underlying model id, e.g. qwen2.5:7b-instruct
     threshold: float        # the gate threshold it was run with
     compare: bool | None
     refusal_retry: bool | None
@@ -75,6 +76,7 @@ def load_report(path: Path, golden: dict[str, dict]) -> Report:
     data = json.loads(path.read_text(encoding="utf-8"))
     config = data.get("config", {})
     report = Report(path=path, model=config.get("answer_model") or config.get("llm_model") or "unknown",
+                    llm_model=config.get("llm_model") or "",
                     threshold=float(config.get("not_found_score", 0.1)), compare=config.get("compare"),
                     refusal_retry=config.get("refusal_retry"))
     for q in data.get("questions", []):
@@ -92,13 +94,19 @@ def load_report(path: Path, golden: dict[str, dict]) -> Report:
 
 
 def latest_reports(eval_dir: Path, golden: dict[str, dict], *, reviewed_only: bool) -> list[Report]:
-    """For each answer model, the most recent report covering every question in scope (a full run)."""
+    """For each answer model, the most recent report covering every question in scope (a full run).
+
+    A report from before Phase 6 names only its LLM (no answer profile); it counts as the same model as
+    a newer report run with that LLM, so the older one is not listed as a model of its own."""
     needed = {qid for qid, q in golden.items() if q.get("status") == "reviewed" or not reviewed_only}
     chosen: dict[str, Report] = {}
     for path in sorted(glob.glob(str(eval_dir / "answers-*.json")), reverse=True):
         report = load_report(Path(path), golden)
-        if report.model not in chosen and needed <= {o.qid for o in report.outcomes}:
-            chosen[report.model] = report
+        if report.model in chosen or not needed <= {o.qid for o in report.outcomes}:
+            continue
+        if report.model == report.llm_model and any(r.llm_model == report.llm_model for r in chosen.values()):
+            continue
+        chosen[report.model] = report
     return list(chosen.values())
 
 

@@ -102,6 +102,16 @@ def test_latest_full_report_per_model(tmp_path):
         ("claude-opus", "answers-20261003-000000.json"), ("local-qwen", "answers-20261001-000000.json")]
 
 
+def test_a_report_from_before_phase_6_is_not_a_model_of_its_own(tmp_path):
+    old = tmp_path / "answers-20260901-000000.json"            # no answer_model, only the LLM
+    old.write_text(json.dumps({"config": {"llm_model": "qwen2.5:7b-instruct", "not_found_score": 0.1},
+                               "questions": QUESTIONS}), encoding="utf-8")
+    new = tmp_path / "answers-20261001-000000.json"
+    new.write_text(json.dumps({"config": {"answer_model": "local-qwen", "llm_model": "qwen2.5:7b-instruct",
+                                          "not_found_score": 0.1}, "questions": QUESTIONS}), encoding="utf-8")
+    assert [r.path.name for r in latest_reports(tmp_path, GOLDEN, reviewed_only=True)] == [new.name]
+
+
 
 def test_feedback_reasons_are_placed_against_the_threshold():
     ratings = [

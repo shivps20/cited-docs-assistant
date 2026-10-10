@@ -117,12 +117,19 @@ def answer_commands(text: str) -> list[str]:
     return list(dict.fromkeys(c for c in commands if len(c) >= 4))
 
 
+def _letters_digits(text: str) -> str:
+    """Only the letters and digits, lower case: 'MQL > tidy vault vplm;' -> 'mqltidyvaultvplm'."""
+    return re.sub(r"[^a-z0-9]+", "", text.lower())
+
+
 def unverified_commands(text: str, context_text: str) -> tuple[int, list[str]]:
-    """(number of commands, those not found word for word in the context): the deterministic TD-12
-    check that catches a changed value in a command (octreedepth 6 instead of 5)."""
+    """(number of commands, those not found in the context): the deterministic TD-12 check that catches
+    a changed value in a command (octreedepth 6 instead of 5). Only letters and digits are compared, so
+    prompt spacing ('MQL >' / 'MQL>'), line breaks and punctuation do not count as a difference (the
+    first full run flagged 33 commands that way, of 50)."""
     commands = answer_commands(text)
-    haystack = normalise(context_text)
-    return len(commands), [c for c in commands if normalise(c) not in haystack]
+    haystack = _letters_digits(context_text)
+    return len(commands), [c for c in commands if _letters_digits(c) not in haystack]
 
 
 def score_answer(q: dict, answer: Answer, verdict: Verdict | None, total_ms: float) -> AnswerResult:
