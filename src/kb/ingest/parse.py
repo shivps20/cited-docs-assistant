@@ -14,6 +14,7 @@ import sqlite3
 import subprocess
 import tempfile
 import time
+import warnings
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,6 +33,9 @@ from kb.ingest.manifest import LEGACY_FORMATS, Document, manifest_path_for
 PARSER_VERSION = 1
 
 HEADING_LABELS = {DocItemLabel.TITLE, DocItemLabel.SECTION_HEADER}
+# Docling warns once per page when an element's box lies outside the page (e.g. a slide-master shape placed
+# off the slide) and clamps it; only page numbers are used here, so the warning is noise.
+BBOX_WARNING = r"Provenance bbox coordinate .* is outside page bounds"
 STALL_SECONDS = 120          # see ParseStats.stalled
 STALL_CPU_SHARE = 0.1
 
@@ -178,15 +182,17 @@ def parse_document(doc: Document, converter, *, force: bool = False) -> tuple[Do
     A legacy .ppt / .doc is converted to .pptx / .docx first (convert_legacy); the hash is the original's."""
     file_hash = file_sha256(doc.path)
     target = cache_path(doc.doc_id, file_hash)
-    if target.exists() and not force:
-        dl = DoclingDocument.load_from_json(target)
-        return dl, ParseStats(doc.doc_id, seconds=0.0, cached=True, **document_stats(dl)), file_hash
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=BBOX_WARNING, category=UserWarning)
+        if target.exists() and not force:
+            dl = DoclingDocument.load_from_json(target)
+            return dl, ParseStats(doc.doc_id, seconds=0.0, cached=True, **document_stats(dl)), file_hash
 
-    start, cpu_start = time.perf_counter(), time.process_time()
-    source = convert_legacy(doc, file_hash) if doc.path.suffix.lower() in LEGACY_FORMATS else doc.path
-    result = converter.convert(source)
-    seconds, cpu_seconds = time.perf_counter() - start, time.process_time() - cpu_start
-    dl = result.document
+        start, cpu_start = time.perf_counter(), time.process_time()
+        source = convert_legacy(doc, file_hash) if doc.path.suffix.lower() in LEGACY_FORMATS else doc.path
+        result = converter.convert(source)
+        seconds, cpu_seconds = time.perf_counter() - start, time.process_time() - cpu_start
+        dl = result.document
 
     target.parent.mkdir(parents=True, exist_ok=True)
     for stale in target.parent.glob(f"{doc.doc_id}.*.json"):
