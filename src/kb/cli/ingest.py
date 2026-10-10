@@ -6,15 +6,16 @@ from kb.core.config import get_settings
 from kb.ingest.manifest import (
     ManifestError,
     append_rows,
-    draft_row,
     find_unlisted,
     load_manifest,
+    scan_folder,
 )
 
 
 def manifest_validate() -> int:
     """`kb manifest validate`: load the manifest, print every problem, list unlisted files."""
     s = get_settings()
+    print(f"documents folder: {s.docs_dir} (KB_DOCS_DIR)")
     try:
         docs = load_manifest(s.manifest_path, s.docs_dir)
     except ManifestError as e:
@@ -33,19 +34,39 @@ def manifest_validate() -> int:
     return 0
 
 
-def manifest_scan() -> int:
-    """`kb manifest scan`: append draft rows for files in the documents folder not yet in the manifest."""
+def manifest_scan(dry_run: bool = False) -> int:
+    """`kb manifest scan`: draft manifest rows for files in the documents folder (and its subfolders) that are
+    not in the manifest yet; files whose content is already listed are reported, not drafted."""
+    from kb.ingest.parse import file_sha256
+
+    sys.stdout.reconfigure(encoding="utf-8")
     s = get_settings()
-    unlisted = find_unlisted(s.manifest_path, s.docs_dir)
-    if not unlisted:
-        print("no new files")
+    if not s.docs_dir.is_dir():
+        print(f"documents folder not found: {s.docs_dir} (set KB_DOCS_DIR)")
+        return 1
+    print(f"documents folder: {s.docs_dir} (KB_DOCS_DIR)")
+    report = scan_folder(s.manifest_path, s.docs_dir, file_sha256)
+    print(f"supported files (PDF, PPTX, DOCX): {report.supported} · in the manifest: {report.listed} · "
+          f"new: {len(report.rows)} · duplicates skipped: {len(report.duplicates)}")
+    for rel, original in report.duplicates:
+        print(f"SKIP {rel}: same content as {original}")
+    if not report.rows:
+        print("no new files to draft")
         return 0
-    rows = [draft_row(p, s.docs_dir) for p in unlisted]
-    append_rows(s.manifest_path, rows)
-    for row in rows:
-        print(f"+ {row['doc_id']}  release={row['release_min'] or '?'}")
-    print(f"\nappended {len(rows)} draft rows to {s.manifest_path.name}; fill in title, category, "
-          "groups and release range, then run `kb manifest validate`")
+    print("\nnew files by folder:")
+    for folder, n in report.by_folder().items():
+        print(f"  {n:4d}  {'(documents folder itself)' if folder == '.' else folder + '/'}")
+    print()
+    for row in report.rows:
+        print(f"{'would add' if dry_run else '+'} {row['doc_id']}  {row['path']}  release={row['release_min'] or '?'}")
+    if dry_run:
+        print(f"\ndry run: {len(report.rows)} draft rows not written; run without --dry-run to append them")
+        return 0
+    append_rows(s.manifest_path, report.rows)
+    print(f"\nappended {len(report.rows)} draft rows to {s.manifest_path.name}.")
+    print("REVIEW BEFORE kb index: drafted rows give access to everyone (allowed_groups=all) and keep "
+          "external_ok=false; set allowed_groups, external_ok, category, title, version and the release range, "
+          "then run `kb manifest validate`.")
     return 0
 
 

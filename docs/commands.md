@@ -63,10 +63,12 @@ uv run python scripts/init_db.py --reset --yes          # empty database, then p
 
 | Command | What it does |
 |---|---|
-| `uv run kb manifest scan` | Append draft rows for files in `KB_DOCS_DIR` that are not in the manifest |
+| `uv run kb manifest scan [--dry-run]` | Draft rows for the files in `KB_DOCS_DIR` and its subfolders that are not in the manifest: a count per subfolder, files whose content is already listed (or found twice) skipped and reported, doc ids kept unique across subfolders (same file name in two folders gets the folder name as prefix). `--dry-run` shows what would be drafted and writes nothing |
 | `uv run kb manifest validate` | Check every row (columns, categories, releases, duplicate IDs, missing files); lists all problems with line numbers |
 
 Run `validate` after every edit to `config/manifest.csv`.
+
+**Documents where they already are.** Set `KB_DOCS_DIR` in `.env` to your own folder (e.g. `D:/Docs/Platform`); the documents are read in place, so nothing has to be copied into `data/documents`. Start with `uv run kb manifest scan --dry-run` to see what a folder holds. Drafted rows give access to everyone (`allowed_groups=all`) and keep `external_ok=false`: review access, category, title, version and release range before `kb index`.
 
 ### `kb parse` — Docling parsing
 

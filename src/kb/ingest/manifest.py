@@ -6,7 +6,8 @@ here, is validated on load, and is copied into every chunk at ingestion.
 
 Columns:
     doc_id          unique slug, e.g. "install-guide"
-    path            file path relative to the documents directory
+    path            file path relative to the documents folder (KB_DOCS_DIR: any folder on disk,
+                    subfolders included, e.g. "Install/R2026x/guide.pdf")
     title           human-readable title, used in citations
     family          logical document across revisions (defaults to doc_id)
     version         document revision, e.g. "3.2"; the highest per family is latest
@@ -19,7 +20,8 @@ Columns:
 
 import csv
 import re
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 
 COLUMNS = ["doc_id", "path", "title", "family", "version", "release_min", "release_max",
@@ -227,6 +229,74 @@ def draft_row(path: Path, docs_dir: Path) -> dict[str, str]:
         "release_min": release_text, "release_max": release_text,
         "allowed_groups": "all", "external_ok": "false", "category": "",
     }
+
+
+@dataclass
+class ScanReport:
+    """What `kb manifest scan` found in the documents folder."""
+    docs_dir: Path
+    supported: int                                   # supported files under docs_dir
+    listed: int                                      # of those, already in the manifest
+    rows: list[dict[str, str]] = field(default_factory=list)          # draft rows for new files
+    duplicates: list[tuple[str, str]] = field(default_factory=list)   # (new file, what it repeats), not drafted
+
+    def by_folder(self) -> dict[str, int]:
+        """Number of new files per subfolder ('.' = the documents folder itself), sorted by folder."""
+        counts: dict[str, int] = {}
+        for row in self.rows:
+            folder = row["path"].rsplit("/", 1)[0] if "/" in row["path"] else "."
+            counts[folder] = counts.get(folder, 0) + 1
+        return dict(sorted(counts.items()))
+
+
+def _unique_id(slug: str, rel_path: str, taken: set[str]) -> str:
+    """slug, or (for a name already used, e.g. the same file name in two subfolders) slug prefixed with its
+    folder's name, or numbered: doc ids must stay unique across the whole tree."""
+    if slug not in taken:
+        return slug
+    parent = rel_path.rsplit("/", 2)[-2] if rel_path.count("/") >= 1 else ""
+    folder = re.sub(r"[^a-z0-9]+", "-", parent.lower()).strip("-")
+    candidate = f"{folder}-{slug}"[:60].rstrip("-") if folder else slug
+    n = 2
+    while candidate in taken:
+        candidate = f"{slug[:56]}-{n}"
+        n += 1
+    return candidate
+
+
+def scan_folder(manifest_path: Path, docs_dir: Path, file_hash: Callable[[Path], str]) -> ScanReport:
+    """Draft rows for supported files under docs_dir (and its subfolders) that are not in the manifest.
+
+    A new file whose content (file_hash) is already in the manifest, or that repeats another new file, is
+    not drafted but reported as a duplicate, so the same document is not indexed twice under two paths.
+    Doc ids stay unique across the tree. Nothing is written (see append_rows)."""
+    listed_rows = []
+    if manifest_path.exists():
+        with manifest_path.open(encoding="utf-8-sig", newline="") as f:
+            listed_rows = [r for r in csv.DictReader(f) if r.get("path", "").strip()]
+    listed_paths = {(docs_dir / r["path"].strip()).resolve(): r["doc_id"].strip() for r in listed_rows}
+    files = sorted(p for p in docs_dir.rglob("*") if p.is_file() and p.suffix.lower() in DOC_TYPES)
+    report = ScanReport(docs_dir=docs_dir, supported=len(files),
+                        listed=sum(1 for p in files if p.resolve() in listed_paths))
+    known: dict[str, str] = {}                         # content hash -> what holds it
+    for path, doc_id in listed_paths.items():
+        if path.is_file():
+            known.setdefault(file_hash(path), f"manifest doc_id '{doc_id}'")
+    taken = {r["doc_id"].strip() for r in listed_rows}
+    for path in files:
+        if path.resolve() in listed_paths:
+            continue
+        rel = path.relative_to(docs_dir).as_posix()
+        digest = file_hash(path)
+        if digest in known:
+            report.duplicates.append((rel, known[digest]))
+            continue
+        known[digest] = f"new file '{rel}'"
+        row = draft_row(path, docs_dir)
+        row["doc_id"] = row["family"] = _unique_id(row["doc_id"], rel, taken)
+        taken.add(row["doc_id"])
+        report.rows.append(row)
+    return report
 
 
 def append_rows(manifest_path: Path, rows: list[dict[str, str]]) -> None:

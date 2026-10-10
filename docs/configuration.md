@@ -10,7 +10,7 @@ All settings come from `.env` (see [.env.example](../.env.example)) through `kb.
 |---|---|---|
 | `QDRANT_URL`, `QDRANT_COLLECTION` | `http://127.0.0.1:6444`, `kb_chunks` | Vector store |
 | `KB_DB_PATH` | `data/kb.db` | SQLite database |
-| `KB_DOCS_DIR`, `KB_MANIFEST_PATH` | `data/documents`, `config/manifest.csv` | Source documents and the manifest |
+| `KB_DOCS_DIR`, `KB_MANIFEST_PATH` | `data/documents`, `config/manifest.csv` | The documents folder (any folder on disk, absolute or relative to the project; subfolders included; documents are read in place, not copied) and the manifest |
 | `EMBED_MODEL_PATH`, `RERANK_MODEL_PATH`, `DOCLING_ARTIFACTS_PATH` | `models/...` | Local models |
 | `HF_HUB_OFFLINE` | `1` | Never download models at runtime |
 | `KB_RERANK_TOP` | `20` | Candidates reranked per search (see [architecture.md](architecture.md#retrieval)) |
@@ -65,7 +65,7 @@ Changing `boilerplate_patterns` or `command_patterns` changes sections and chunk
 | Column | Example | Purpose |
 |---|---|---|
 | `doc_id` | `install-guide` | Stable ID used in citations and re-ingestion |
-| `path` | `Acme_Platform_Installation_Guide.pdf` | File, relative to `KB_DOCS_DIR` |
+| `path` | `Install/Acme_Platform_Installation_Guide.pdf` | File, relative to `KB_DOCS_DIR`; may include subfolders |
 | `title` | Acme Platform Installation Guide | Shown in answer citations |
 | `family`, `version` | `install-guide`, `2.0` | The highest version per family is the latest revision |
 | `release_min`, `release_max` | `R2024x`, *(blank)* | Release range the document applies to; blank = open-ended |

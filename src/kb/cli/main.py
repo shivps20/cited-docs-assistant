@@ -30,7 +30,8 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     manifest = commands.add_parser("manifest", help="document manifest").add_subparsers(dest="action", required=True)
     manifest.add_parser("validate", help="validate the manifest and list documents")
-    manifest.add_parser("scan", help="append draft rows for files not yet in the manifest")
+    scan = manifest.add_parser("scan", help="draft rows for files in the documents folder (and subfolders) not yet in the manifest")
+    scan.add_argument("--dry-run", action="store_true", help="show what would be drafted, write nothing")
     models = commands.add_parser("models", help="language model catalogue (config/models.yaml)").add_subparsers(
         dest="action", required=True)
     models.add_parser("list", help="validate the catalogue and list models, roles and keys")
@@ -135,7 +136,7 @@ def main(argv: list[str] | None = None) -> int:
 def _run(args: argparse.Namespace) -> int:
     """Run the chosen subcommand."""
     if args.command == "manifest":
-        return {"validate": manifest_validate, "scan": manifest_scan}[args.action]()
+        return manifest_validate() if args.action == "validate" else manifest_scan(args.dry_run)
     if args.command == "cache":
         return cache_stats() if args.action == "stats" else cache_clear(args.stale)
     if args.command == "models":
