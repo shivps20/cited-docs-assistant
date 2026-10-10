@@ -4,26 +4,34 @@
 
 ## `kb serve`
 
-| Option | Default | Meaning |
-|---|---|---|
-| `--host` | `KB_API_HOST` (127.0.0.1) | Interface to listen on. Keep the loopback address: users are not authenticated |
-| `--port` | `KB_API_PORT` (8000) | Port |
+<table style="width:100%">
+<colgroup><col style="width:12%"><col style="width:29%"><col style="width:59%"></colgroup>
+<thead><tr><th>Option</th><th>Default</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>--host</code></td><td><code>KB_API_HOST</code> (127.0.0.1)</td><td>Interface to listen on. Keep the loopback address: users are not authenticated</td></tr>
+<tr><td><code>--port</code></td><td><code>KB_API_PORT</code> (8000)</td><td>Port</td></tr>
+</tbody>
+</table>
 
 Loads bge-m3, the reranker and the LLM providers **once** at startup (~20 s), so each request costs only retrieval and generation. **Chat UI: <http://127.0.0.1:8000>**; interactive API docs: <http://127.0.0.1:8000/docs>.
 
-| Endpoint | What it does |
-|---|---|
-| `GET /api/health` | Status of SQLite, Qdrant (point count), Ollama (model pulled) and the loaded models; `status` is `ok` or `degraded` |
-| `GET /api/users` | Users from `config/users.yaml`, for the UI's user picker |
-| `GET /api/models` | Models from `config/models.yaml` for the UI's model menu: `default` (the answer role), `fallback`, and per model `name`, `model`, `adapter`, `location` (local / external) and `ready` (key set) |
-| `GET /api/me` | The current user and the groups their searches are filtered by |
-| `POST /api/sessions` | Start a conversation |
-| `GET /api/sessions` | The current user's conversations, most recent first, titled by their first question |
-| `GET /api/sessions/{id}` | One conversation with its messages (404 if it is another user's) |
-| `PUT /api/sessions/{id}/release` | Set (`{"release": "R2025x"}`) or clear (`{"release": null}`) the conversation's release filter |
-| `POST /api/feedback` | Rate one of your answers: `{"trace_id": "…", "rating": 1 \| -1, "reason": "…" (optional, only with -1: `wrong`, `incomplete`, `should_have_answered`, `should_have_refused`), "comment": "…" (optional)}`; a reason with a 👍 or an unknown reason is a 422, and a 👍 clears an earlier reason; rating again replaces the earlier rating (404 for another user's answer). A 👎 also removes the answer from the answer cache (whether it was the stored answer or a cached copy), so the next ask is answered afresh |
-| `GET /` | The chat UI |
-| `POST /api/chat` | Ask a question: body `{"question": "…", "session_id": "…" (optional: a new conversation without it), "model": "claude-opus" (optional: a name from `config/models.yaml`; without it the answer role's model; `provider` is accepted as the older name), "cache": false (optional: answer afresh instead of from the answer cache)}`. An unknown model is a 400 listing the configured ones. Answers as a stream of server-sent events (below); `final` names the model that answered (`model_profile`) and says whether the answer came from the cache (`cached`) |
+<table style="width:100%">
+<colgroup><col style="width:20%"><col style="width:80%"></colgroup>
+<thead><tr><th>Endpoint</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><code>GET /api/health</code></td><td>Status of SQLite, Qdrant (point count), Ollama (model pulled) and the loaded models; <code>status</code> is <code>ok</code> or <code>degraded</code></td></tr>
+<tr><td><code>GET /api/users</code></td><td>Users from <code>config/users.yaml</code>, for the UI's user picker</td></tr>
+<tr><td><code>GET /api/models</code></td><td>Models from <code>config/models.yaml</code> for the UI's model menu: <code>default</code> (the answer role), <code>fallback</code>, and per model <code>name</code>, <code>model</code>, <code>adapter</code>, <code>location</code> (local / external) and <code>ready</code> (key set)</td></tr>
+<tr><td><code>GET /api/me</code></td><td>The current user and the groups their searches are filtered by</td></tr>
+<tr><td><code>POST /api/sessions</code></td><td>Start a conversation</td></tr>
+<tr><td><code>GET /api/sessions</code></td><td>The current user's conversations, most recent first, titled by their first question</td></tr>
+<tr><td><code>GET /api/sessions/{id}</code></td><td>One conversation with its messages (404 if it is another user's)</td></tr>
+<tr><td><code>PUT /api/sessions/{id}/release</code></td><td>Set (<code>{&quot;release&quot;: &quot;R2025x&quot;}</code>) or clear (<code>{&quot;release&quot;: null}</code>) the conversation's release filter</td></tr>
+<tr><td><code>POST /api/feedback</code></td><td>Rate one of your answers: <code>{&quot;trace_id&quot;: &quot;…&quot;, &quot;rating&quot;: 1 | -1, &quot;reason&quot;: &quot;…&quot; (optional, only with -1: </code>wrong<code>, </code>incomplete<code>, </code>should_have_answered<code>, </code>should_have_refused<code>), &quot;comment&quot;: &quot;…&quot; (optional)}</code>; a reason with a 👍 or an unknown reason is a 422, and a 👍 clears an earlier reason; rating again replaces the earlier rating (404 for another user's answer). A 👎 also removes the answer from the answer cache (whether it was the stored answer or a cached copy), so the next ask is answered afresh</td></tr>
+<tr><td><code>GET /</code></td><td>The chat UI</td></tr>
+<tr><td><code>POST /api/chat</code></td><td>Ask a question: body <code>{&quot;question&quot;: &quot;…&quot;, &quot;session_id&quot;: &quot;…&quot; (optional: a new conversation without it), &quot;model&quot;: &quot;claude-opus&quot; (optional: a name from </code>config/models.yaml<code>; without it the answer role's model; </code>provider<code> is accepted as the older name), &quot;cache&quot;: false (optional: answer afresh instead of from the answer cache)}</code>. An unknown model is a 400 listing the configured ones. Answers as a stream of server-sent events (below); <code>final</code> names the model that answered (<code>model_profile</code>) and says whether the answer came from the cache (<code>cached</code>)</td></tr>
+</tbody>
+</table>
 
 The user is named by the `X-KB-User` header (the default user from `config/users.yaml` when absent); unknown users get 403. Access groups always come from `config/users.yaml` (example: [config/users.example.yaml](../config/users.example.yaml)), never from the request, so a client cannot claim more access than configured.
 
@@ -42,7 +50,7 @@ In PowerShell, `curl` is an alias for `Invoke-WebRequest` (different options, an
 - **User picker** (top right): users from `config/users.yaml`, with their groups; remembered in the browser. Switching user starts a new conversation.
 - **Conversations** (left): your conversations, newest first; click one to reopen it with its answers, sources and ratings.
 - **Asking:** Enter sends, Shift+Enter adds a line. Progress shows "Understanding your follow-up…", "Searching the documents (R2026x)…", "Writing the answer…"; the answer streams, then is replaced by the cleaned version.
-- **Each answer shows:** "Interpreted as …" for a condensed follow-up and the release used; the answer with clickable `[n]` (highlights the source); the articles and links block; Sources; notices; a collapsible "Context sent to the LLM"; retrieval / generation times, model, tokens/s and the trace id; a notice "Answered from the answer cache …" when the same question was answered before under the same conditions (it comes back at once, with the same sources); 👍 / 👎 with an optional comment; after a 👎, a reason can be chosen (Wrong, Incomplete, Should have answered, Should have refused), and it is shown again when the conversation is reopened. `kb calibrate` uses the last two reasons.
+- **Each answer shows:** "Interpreted as …" for a condensed follow-up and the release used; the answer with clickable `[n]` (highlights the source); the articles and links block; Sources, each with its file path under it; notices; a collapsible "Context sent to the LLM"; retrieval / generation times, model, tokens/s and the trace id; a notice "Answered from the answer cache …" when the same question was answered before under the same conditions (it comes back at once, with the same sources); 👍 / 👎 with an optional comment; after a 👎, a reason can be chosen (Wrong, Incomplete, Should have answered, Should have refused), and it is shown again when the conversation is reopened. `kb calibrate` uses the last two reasons.
 - **Release chip** (above the input): the conversation's release; ✕ clears it. Name a release in a question to set it.
 - **Not found** answers are shown in amber, with whether the gate (no relevant documents) or the LLM (documents do not contain the answer) refused.
 - **Health dot** (top): green when SQLite, Qdrant, Ollama and the models are all fine; hover for details.
@@ -54,6 +62,6 @@ In PowerShell, `curl` is an alias for `Invoke-WebRequest` (different options, an
 3. **Answer:** the same pipeline as `kb ask` (retrieval with the user's groups and the release, gate, LLM, citations, article numbers / URLs).
 4. **Stored:** the question (with its standalone version) and the answer (with its trace id) in `messages`; the trace keeps the original and the standalone question and a `condense` stage.
 
-Server-sent events, in order: `session` (session id, sticky release) → `status` (`queued` while another turn is running, `condensing`, then `searching` with the standalone question and release; for a comparison also `comparing` while the question is split, then `searching_side` with `side`, `index` and `total` before each side's search (`reading` with the `sections` added by the comparison read step, only when the answer model has `compare_read: true`); `retrying` with `units` when the model found no answer and is asked again with fewer sources, followed by a second `context` event and more `token` events) → `context` (the numbered sources sent to the LLM; `same_text` lists near-identical copies in other documents that were not sent again) → `token` … (the raw answer as it streams) → `final` (the **cleaned** answer, `route` and the compared `sides`, sources (each with its `same_text` copies), article references, notices, gate verdict, provider, timings, trace id, and `cached`: true when the answer came from the answer cache), or `error` instead of `final`. A UI should replace the streamed text with `final.answer`. Only one turn runs at a time (shared models and GPU); a request that has to wait gets `status: queued` first and starts when the running turn ends. If the browser disconnects mid-answer, the turn still finishes and is stored: reopening the conversation shows it.
+Server-sent events, in order: `session` (session id, sticky release) → `status` (`queued` while another turn is running, `condensing`, then `searching` with the standalone question and release; for a comparison also `comparing` while the question is split, then `searching_side` with `side`, `index` and `total` before each side's search (`reading` with the `sections` added by the comparison read step, only when the answer model has `compare_read: true`); `retrying` with `units` when the model found no answer and is asked again with fewer sources, followed by a second `context` event and more `token` events) → `context` (the numbered sources sent to the LLM, each with its file `path` as set by `KB_SOURCE_PATH`; `same_text` lists near-identical copies in other documents that were not sent again) → `token` … (the raw answer as it streams) → `final` (the **cleaned** answer, `route` and the compared `sides`, sources (each with its file `path`, full or relative per `KB_SOURCE_PATH`, and its `same_text` copies), article references, notices, gate verdict, provider, timings, trace id, and `cached`: true when the answer came from the answer cache), or `error` instead of `final`. A UI should replace the streamed text with `final.answer`. Only one turn runs at a time (shared models and GPU); a request that has to wait gets `status: queued` first and starts when the running turn ends. If the browser disconnects mid-answer, the turn still finishes and is stored: reopening the conversation shows it.
 
 Without the UI: open <http://127.0.0.1:8000/docs>, expand **POST /api/chat**, *Try it out*, and send `{"question": "Which port does the application server use on R2026x?"}` (the docs page shows the events when the answer is complete), then the same with `"session_id"` from the `session` event and `"question": "and on Oracle?"`.

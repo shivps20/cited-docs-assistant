@@ -14,6 +14,7 @@ from kb.ingest.manifest import (
     load_manifest,
     parse_release,
     release_label,
+    scan_folder,
 )
 
 
@@ -122,8 +123,45 @@ def test_scan_drafts(tmp_path, docs_dir):
     (docs_dir / "Acme_Setup_R2025x.pdf").write_bytes(b"x")
     draft = draft_row(docs_dir / "Acme_Setup_R2025x.pdf", docs_dir)
     assert draft["doc_id"] == "acme-setup-r2025x"
-    assert (draft["release_min"], draft["release_max"], draft["category"]) == ("R2025x", "R2025x", "")
+    assert (draft["release_min"], draft["release_max"], draft["category"]) == ("R2025x", "", "administration")
+    assert "category guessed from the name" in draft["review"]
 
+
+
+def content_hash(path):
+    """The file's bytes as its 'hash' (enough to tell test files apart)."""
+    return path.read_bytes().hex()
+
+
+def test_scan_walks_subfolders_skips_duplicates_and_keeps_ids_unique(tmp_path):
+    root = tmp_path / "library"
+    for rel, content in {"guide.pdf": b"listed", "Install/R2026x/guide.pdf": b"new guide",
+                         "Install/R2026x/Setup_R2026x.docx": b"setup", "Old/copy of guide.pdf": b"listed",
+                         "Old/twin.pptx": b"setup", "Old/notes.txt": b"ignored"}.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_bytes(content)
+    m = tmp_path / "manifest.csv"
+    write_manifest(m, [row(doc_id="guide", path="guide.pdf")])
+    report = scan_folder(m, root, content_hash)
+    assert (report.supported, report.listed) == (5, 1)
+    assert [(r["doc_id"], r["path"]) for r in report.rows] == [
+        ("r2026x-guide", "Install/R2026x/guide.pdf"),         # same name as a listed document: folder prefix
+        ("setup-r2026x", "Install/R2026x/Setup_R2026x.docx")]
+    assert report.rows[0]["family"] == "r2026x-guide" and report.rows[1]["release_min"] == "R2026x"
+    assert "same name as manifest family 'guide'" in report.rows[0]["review"]      # never hides the listed guide
+    assert report.duplicates == [("Old/copy of guide.pdf", "manifest doc_id 'guide'"),
+                                 ("Old/twin.pptx", "new file 'Install/R2026x/Setup_R2026x.docx'")]
+    assert report.by_folder() == {"Install/R2026x": 2}
+    assert len(m.read_text(encoding="utf-8").splitlines()) == 2      # nothing written by the scan itself
+
+
+def test_scan_of_an_absolute_folder_without_a_manifest(tmp_path):
+    root = tmp_path / "elsewhere"
+    root.mkdir()
+    (root / "a.pdf").write_bytes(b"a")
+    report = scan_folder(tmp_path / "missing.csv", root.resolve(), content_hash)
+    assert (report.supported, report.listed, [r["path"] for r in report.rows]) == (1, 0, ["a.pdf"])
+    assert report.by_folder() == {".": 1}
 
 _LOCAL = get_settings()
 

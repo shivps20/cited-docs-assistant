@@ -333,12 +333,17 @@ def _is_boilerplate(text: str) -> bool:
     return any(p.match(text.strip()) for p in get_domain().boilerplate)
 
 
-def remove_furniture(elements: list[Element], furniture: set[str], n_pages: int
+def remove_furniture(elements: list[Element], furniture: set[str], n_pages: int, *, slides: bool = False
                      ) -> tuple[list[Element], dict[str, int]]:
-    """Drop legal boilerplate, leaked page headers/footers and lines repeated on many pages."""
+    """Drop legal boilerplate, leaked page headers/footers and lines repeated on many pages.
+
+    slides: in a deck, headings are slide titles and a chapter title often repeats over consecutive slides
+    ("Storage Systems" on slides 4-8), so headings neither count nor go as repeated lines; a running footer on
+    slides is plain text and still goes. Boilerplate patterns and Docling's furniture apply to everything."""
+    repeatable = ("text",) if slides else ("heading", "text")
     pages_by_line: dict[str, set[int]] = defaultdict(set)
     for e in elements:
-        if e.kind in ("heading", "text") and len(e.text) <= 200:
+        if e.kind in repeatable and len(e.text) <= 200:
             pages_by_line[normalize_line(e.text)].add(e.page)
     threshold = max(3, REPEATED_LINE_SHARE * n_pages)
     repeated = {line for line, pages in pages_by_line.items() if len(pages) >= threshold}
@@ -347,7 +352,8 @@ def remove_furniture(elements: list[Element], furniture: set[str], n_pages: int
     for e in elements:
         if e.kind in ("heading", "text"):
             key = normalize_line(e.text)
-            if _is_boilerplate(e.text) or key in repeated or (key in furniture and len(e.text) <= 200):
+            if (_is_boilerplate(e.text) or (key in repeated and e.kind in repeatable)
+                    or (key in furniture and len(e.text) <= 200)):
                 removed[e.text.strip()[:80]] += 1
                 continue
         kept.append(e)
@@ -446,7 +452,7 @@ def build_structure(elements: list[Element], *, doc_type: str, n_pages: int,
     does not contradict it. Everything up to the TOC page is front matter (section 0).
     PPTX files go to _build_slides instead.
     """
-    elements, removed = remove_furniture(elements, furniture or set(), n_pages)
+    elements, removed = remove_furniture(elements, furniture or set(), n_pages, slides=doc_type == "pptx")
     if doc_type == "pptx":
         return _build_slides(elements, removed)
 

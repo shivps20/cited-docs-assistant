@@ -32,11 +32,15 @@ Search retrieves 30 candidates (dense + sparse, fused), reranks the first `KB_RE
 
 ### Tuning flags
 
-| Flag | Default | Meaning |
-|---|---|---|
-| `--rerank-top N` | `KB_RERANK_TOP` (20) | Rerank only the first N candidates; the rest keep search order. `0` reranks all. |
-| `--max-length N` | 512 | Reranker input length in tokens; longer chunks are truncated. |
-| `--min-score X` | off | Drop context chunks whose rerank score is below X (0–1). Unreranked chunks are dropped too. |
+<table style="width:100%">
+<colgroup><col style="width:24%"><col style="width:16%"><col style="width:60%"></colgroup>
+<thead><tr><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>--rerank-top N</code></td><td><code>KB_RERANK_TOP</code> (20)</td><td>Rerank only the first N candidates; the rest keep search order. <code>0</code> reranks all.</td></tr>
+<tr><td><code>--max-length N</code></td><td>512</td><td>Reranker input length in tokens; longer chunks are truncated.</td></tr>
+<tr><td><code>--min-score X</code></td><td>off</td><td>Drop context chunks whose rerank score is below X (0–1). Unreranked chunks are dropped too.</td></tr>
+</tbody>
+</table>
 
 Change the default depth in `.env` with `KB_RERANK_TOP=<N>`.
 
@@ -52,7 +56,7 @@ uv run kb ask "..." --groups internal --release R2025x --show-context
 1. **Gate:** if nothing was found, or the best rerank score is below `KB_NOT_FOUND_SCORE` (0.1), it replies "not found" without calling the LLM. The value is calibrated with `kb calibrate` ([evaluation.md](evaluation.md#kb-calibrate--the-not-found-threshold)): 0.1 sits midway between the unanswerable questions the gate can catch and the lowest-scoring answered one; most unanswerable questions score as high as answerable ones, so the prompt's refusal rule (below) does the rest.
 2. **Prompt:** the context goes to the LLM as numbered sources (document, release, section, pages). The rules: answer only from the sources, cite `[n]` after every statement, copy article numbers, URLs, commands and queries exactly, give procedures as numbered steps, and reply with a fixed "not found" sentence when the sources do not contain the answer (this catches on-topic near misses that the gate lets through). A "not found" from the model is asked once more with only the best 3 sources (2 per side for a comparison): the small model sometimes gives up when the answering section sits among several partly related ones. A second refusal stands (`KB_REFUSAL_RETRY=false` switches this off).
 3. **Model:** chosen from the model catalogue (`config/models.yaml`, see [configuration.md](configuration.md)): the answer role's model, or the one a request names. The model registry (`kb.llm.registry`) tries it, then its fallbacks, then the catalogue's local fallback model. **Privacy policy:** an external model (OpenAI, Mistral, Gemini, Claude) only gets a context in which **every** source has `external_ok = true`; otherwise external models are skipped and the local model answers, with a notice saying why. Models whose key is not set are skipped the same way, and a model that fails or refuses hands over to the next one. Without `models.yaml`: Ollama (`LLM_MODEL`), plus OpenAI when `OPENAI_API_KEY` and `OPENAI_MODEL` are set (`KB_LLM_PROVIDER=auto`).
-4. **Citations:** `[n]` markers that do not match a source are removed; the **Sources** list under the answer is built from the cited numbers, never written by the LLM.
+4. **Citations:** `[n]` markers that do not match a source are removed; the **Sources** list under the answer is built from the cited numbers, never written by the LLM. Each source also shows its file: the full path by default, or (`KB_SOURCE_PATH=relative`) the path relative to `KB_DOCS_DIR`, with documents kept elsewhere shown by file name only.
 
 **Comparisons** ("How does X differ between A and B?", "A versus B", two releases, "Should …, X or Y?", two documents named: "Do the Apache and the F5 guides …?") take a different retrieval step, because one search tends to fill the context with the side that matches the wording best:
 

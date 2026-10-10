@@ -1,6 +1,6 @@
-doc_id,path,title,family,version,release_min,release_max,allowed_groups,external_ok,category
-install-guide,Acme_Platform_Installation_Guide.pdf,Acme Platform Installation Guide,install-guide,2.0,R2024x,,all,true,installation
-install-guide-v1,Acme_Platform_Installation_Guide_v1.pdf,Acme Platform Installation Guide,install-guide,1.0,R2022x,R2023x,all,true,installation
-sso-setup,Acme_Single_Sign_On_Setup.pdf,Single Sign-On Setup,sso-setup,1.0,R2025x,R2026x,all,true,authentication
-performance-tracing,Acme_Performance_Tracing_Internal.pdf,Performance Tracing (internal),performance-tracing,1.1,,,internal,false,performance
-role-overview,Acme_Designer_Role_Overview.pptx,Designer Role Overview,role-overview,1.0,R2025x,R2026x,all,true,functional
+doc_id,path,title,family,version,release_min,release_max,allowed_groups,external_ok,category,added,review
+install-guide,Acme_Platform_Installation_Guide.pdf,Acme Platform Installation Guide,install-guide,2.0,R2024x,,all,true,installation,2026-10-04,
+install-guide-v1,Acme_Platform_Installation_Guide_v1.pdf,Acme Platform Installation Guide,install-guide,1.0,R2022x,R2023x,all,true,installation,2026-10-04,
+sso-setup,Acme_Single_Sign_On_Setup.pdf,Single Sign-On Setup,sso-setup,1.0,R2025x,R2026x,all,true,authentication,2026-10-04,
+performance-tracing,Acme_Performance_Tracing_Internal.pdf,Performance Tracing (internal),performance-tracing,1.1,,,internal,false,performance,2026-10-04,
+role-overview,Acme_Designer_Role_Overview.pptx,Designer Role Overview,role-overview,1.0,R2025x,R2026x,all,true,functional,2026-10-10,category guessed from the name

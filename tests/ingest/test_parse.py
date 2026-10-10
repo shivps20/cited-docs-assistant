@@ -80,3 +80,19 @@ def test_cache_path_includes_hash_and_version(env):
     path = parse.cache_path("doc-a", "abcdef1234567890")
     assert path.name == f"doc-a.abcdef123456.v{parse.PARSER_VERSION}.json"
     assert isinstance(path, Path)
+
+
+def test_only_the_bbox_warning_is_silenced():
+    import re
+    import warnings
+
+    from kb.ingest.parse import BBOX_WARNING
+
+    noise = "Provenance bbox coordinate l on page 23 is outside page bounds: value=-1441985.0 < lo=0.0; clamping to 0.0"
+    assert re.match(BBOX_WARNING, noise)
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        warnings.filterwarnings("ignore", message=BBOX_WARNING, category=UserWarning)
+        warnings.warn(noise, UserWarning, stacklevel=1)
+        warnings.warn("something else", UserWarning, stacklevel=1)
+    assert [str(w.message) for w in seen] == ["something else"]

@@ -10,6 +10,7 @@ from kb.cli.ingest import (
     index_documents,
     inspect_chunks,
     inspect_document,
+    manifest_backfill,
     manifest_scan,
     manifest_validate,
     parse_documents,
@@ -30,7 +31,12 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     manifest = commands.add_parser("manifest", help="document manifest").add_subparsers(dest="action", required=True)
     manifest.add_parser("validate", help="validate the manifest and list documents")
-    manifest.add_parser("scan", help="append draft rows for files not yet in the manifest")
+    scan = manifest.add_parser("scan", help="draft rows for files in the documents folder (and subfolders) not yet in the manifest")
+    scan.add_argument("--dry-run", action="store_true", help="show what would be drafted, write nothing")
+    scan.add_argument("--folder", metavar="PATH",
+                      help="scan this folder instead of KB_DOCS_DIR; its files are read where they are (absolute paths)")
+    backfill = manifest.add_parser("backfill", help="fill the added date and missing releases of existing rows")
+    backfill.add_argument("--write", action="store_true", help="apply the changes (default: show them only)")
     models = commands.add_parser("models", help="language model catalogue (config/models.yaml)").add_subparsers(
         dest="action", required=True)
     models.add_parser("list", help="validate the catalogue and list models, roles and keys")
@@ -49,6 +55,8 @@ def main(argv: list[str] | None = None) -> int:
                          help="show the chunks (all, or of --section) as they will be embedded")
     chunk = commands.add_parser("chunk", help="build sections + chunks from parsed documents and store them")
     chunk.add_argument("--doc", action="append", metavar="DOC_ID", help="only this document (repeatable)")
+    chunk.add_argument("--force", action="store_true",
+                       help="rebuild documents already up to date (after structure / chunking code or domain.yaml changes)")
     coverage = commands.add_parser("coverage", help="check golden facts are present in stored chunks")
     coverage.add_argument("--all", action="store_true", help="list passing questions too")
     index = commands.add_parser("index", help="embed chunks and write them to Qdrant")
@@ -135,7 +143,9 @@ def main(argv: list[str] | None = None) -> int:
 def _run(args: argparse.Namespace) -> int:
     """Run the chosen subcommand."""
     if args.command == "manifest":
-        return {"validate": manifest_validate, "scan": manifest_scan}[args.action]()
+        if args.action == "backfill":
+            return manifest_backfill(args.write)
+        return manifest_validate() if args.action == "validate" else manifest_scan(args.dry_run, args.folder)
     if args.command == "cache":
         return cache_stats() if args.action == "stats" else cache_clear(args.stale)
     if args.command == "models":
@@ -149,7 +159,7 @@ def _run(args: argparse.Namespace) -> int:
             return inspect_chunks(args.doc_id, args.section)
         return inspect_document(args.doc_id, args.section, args.details)
     if args.command == "chunk":
-        return chunk_documents(args.doc)
+        return chunk_documents(args.doc, args.force)
     if args.command == "coverage":
         return show_coverage(args.all)
     if args.command == "index":

@@ -174,3 +174,21 @@ def test_coverage_reports_missing_facts_and_pages(conn):
     assert by_id["q2"].missing == ["20300"]
     assert by_id["q3"].no_chunks == ["doc-a p50-50"]
     assert "q4" not in by_id
+
+
+def test_chunks_up_to_date_decides_what_kb_chunk_skips(conn):
+    import dataclasses
+
+    st = sample_structure()
+    assert not ch.chunks_up_to_date(conn, doc())                          # parsed, never chunked
+    ch.store_document(conn, doc(), st, ch.chunk_document(doc(), st, words), words)
+    assert ch.chunks_up_to_date(conn, doc())                              # same title, release, chunker
+    assert not ch.chunks_up_to_date(conn, dataclasses.replace(doc(), title="Doc A (renamed)"))
+    assert not ch.chunks_up_to_date(conn, dataclasses.replace(doc(), release_min=2024))   # header shows the release
+    conn.execute("UPDATE documents SET chunker_version = ?", (ch.CHUNKER_VERSION - 1,))
+    assert not ch.chunks_up_to_date(conn, doc())                          # older chunker
+    conn.execute("UPDATE documents SET chunker_version = ?, status = 'parsed'", (ch.CHUNKER_VERSION,))
+    assert not ch.chunks_up_to_date(conn, doc())                          # the file changed: re-parsed
+    conn.execute("DELETE FROM chunks")
+    conn.execute("UPDATE documents SET status = 'indexed', chunk_count = 0")
+    assert ch.chunks_up_to_date(conn, doc())                              # no text at all: chunked is final

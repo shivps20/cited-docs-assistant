@@ -10,7 +10,7 @@ uv run kb status                           # status and parse statistics per doc
 uv run kb inspect DOC_ID [--details]       # rebuilt section tree (numbers, pages, size)
 uv run kb inspect DOC_ID --section 3.1.7   # content of one section as it will be chunked
 uv run kb inspect DOC_ID --chunks [--section 3.1.7]   # chunks as they will be embedded (preview)
-uv run kb chunk [--doc DOC_ID]             # build + store sections and chunks in SQLite
+uv run kb chunk [--doc DOC_ID] [--force]   # sections + chunks in SQLite (new or changed documents only)
 uv run kb coverage                         # are golden facts present in the stored chunks?
 uv run kb index [--doc DOC_ID] [--force] [--prune]   # embed (bge-m3, GPU) and write to Qdrant
 ```
@@ -45,13 +45,17 @@ ollama stop qwen2.5:7b-instruct   # unload it, freeing the GPU before ingestion
 
 ### Setup scripts
 
-| Command | Options | What it does |
-|---|---|---|
-| `uv sync` | | Create `.venv` and install dependencies (CUDA torch from the PyTorch index) |
-| `uv run python scripts/init_qdrant.py` | `--recreate` delete and recreate the collection (drops all points); `--yes` skip the confirmation | Create the `kb_chunks` collection (dense 1024 cosine + sparse) and its payload indexes; safe to re-run |
-| `uv run python scripts/init_db.py` | `--reset` delete and recreate the database; `--yes` skip the confirmation | Create `data/kb.db` or apply pending schema migrations (needed after pulling code with a new migration: the `kb` commands and the server refuse an out-of-date schema) |
-| `uv run python scripts/download_models.py` | `--verify-only` skip downloads, only run the smoke tests | Download bge-m3, bge-reranker-v2-m3 and Docling models into `./models`, then verify they load offline |
-| `uv run python scripts/check_env.py` | `--deep` also load the LLM and generate a token | Health check: .env, Qdrant, SQLite schema, Ollama, GPU, models, manifest, disk |
+<table style="width:100%">
+<colgroup><col style="width:19%"><col style="width:28%"><col style="width:53%"></colgroup>
+<thead><tr><th>Command</th><th>Options</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><code>uv sync</code></td><td></td><td>Create <code>.venv</code> and install dependencies (CUDA torch from the PyTorch index)</td></tr>
+<tr><td><code>uv run python scripts/init_qdrant.py</code></td><td><code>--recreate</code> delete and recreate the collection (drops all points); <code>--yes</code> skip the confirmation</td><td>Create the <code>kb_chunks</code> collection (dense 1024 cosine + sparse) and its payload indexes; safe to re-run</td></tr>
+<tr><td><code>uv run python scripts/init_db.py</code></td><td><code>--reset</code> delete and recreate the database; <code>--yes</code> skip the confirmation</td><td>Create <code>data/kb.db</code> or apply pending schema migrations (needed after pulling code with a new migration: the <code>kb</code> commands and the server refuse an out-of-date schema)</td></tr>
+<tr><td><code>uv run python scripts/download_models.py</code></td><td><code>--verify-only</code> skip downloads, only run the smoke tests</td><td>Download bge-m3, bge-reranker-v2-m3 and Docling models into <code>./models</code>, then verify they load offline</td></tr>
+<tr><td><code>uv run python scripts/check_env.py</code></td><td><code>--deep</code> also load the LLM and generate a token</td><td>Health check: .env, Qdrant, SQLite schema, Ollama, GPU, models, manifest, disk</td></tr>
+</tbody>
+</table>
 
 ```bash
 uv run python scripts/check_env.py --deep
@@ -61,19 +65,30 @@ uv run python scripts/init_db.py --reset --yes          # empty database, then p
 
 ### `kb manifest`
 
-| Command | What it does |
-|---|---|
-| `uv run kb manifest scan` | Append draft rows for files in `KB_DOCS_DIR` that are not in the manifest |
-| `uv run kb manifest validate` | Check every row (columns, categories, releases, duplicate IDs, missing files); lists all problems with line numbers |
+<table style="width:100%">
+<colgroup><col style="width:40%"><col style="width:60%"></colgroup>
+<thead><tr><th>Command</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><code>uv run kb manifest scan [--folder PATH] [--dry-run]</code></td><td>Draft rows for the files (types in <code>KB_DOC_TYPES</code>) in <code>KB_DOCS_DIR</code>, or in <code>--folder</code> (any folder, read where it is: rows get absolute paths), and its subfolders that are not in the manifest: a count per subfolder, files whose content is already listed (or found twice) skipped and reported, doc ids kept unique across subfolders (same file name in two folders gets the folder name as prefix). <code>--dry-run</code> shows what would be drafted and writes nothing</td></tr>
+<tr><td><code>uv run kb manifest validate</code></td><td>Check every row (columns, categories, releases, dates, duplicate IDs, missing files, two rows with the same family and version); lists all problems with line numbers and how to fix a family clash; counts and lists rows still marked for review</td></tr>
+<tr><td><code>uv run kb manifest backfill [--write]</code></td><td>Fill what older rows lack: the <code>added</code> date (first ingestion in <code>kb.db</code>, else the file date) and, for rows without a release, the release from the file name or the PDF's first pages. Shows the changes; <code>--write</code> applies them (backup in <code>data/</code>) and notes each in the <code>review</code> column</td></tr>
+</tbody>
+</table>
 
 Run `validate` after every edit to `config/manifest.csv`.
 
+**Documents where they already are.** Keep `KB_DOCS_DIR=data/documents` and add any other folder with `uv run kb manifest scan --folder "E:/Docs/New"`: its files are read where they are (the manifest holds their absolute path), so nothing has to be copied. Start with `--dry-run` to see what a folder holds; files whose content is already in the manifest are skipped. `.ppt` / `.doc` are converted with LibreOffice when parsed (once, cached). Drafted rows give access to everyone (`allowed_groups=all`) and keep `external_ok=false`: review access, category, title, version and release range before `kb index`.
+
 ### `kb parse` — Docling parsing
 
-| Option | Meaning |
-|---|---|
-| `--doc DOC_ID` | Only this document; repeatable |
-| `--force` | Re-parse even if a cached result exists in `data/parsed/` |
+<table style="width:100%">
+<colgroup><col style="width:40%"><col style="width:60%"></colgroup>
+<thead><tr><th>Option</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>--doc DOC_ID</code></td><td>Only this document; repeatable</td></tr>
+<tr><td><code>--force</code></td><td>Re-parse even if a cached result exists in <code>data/parsed/</code></td></tr>
+</tbody>
+</table>
 
 ```bash
 uv run kb parse                                       # all new or changed documents
@@ -88,12 +103,16 @@ Status per document (parsed / chunked / indexed), parse statistics (pages, secon
 
 ### `kb inspect` — review a document's structure and chunks
 
-| Option | Meaning |
-|---|---|
-| `DOC_ID` | Document to show (required) |
-| `--section NUMBER` | Print one section's content, e.g. `3.1.7` |
-| `--details` | Also list unmatched TOC entries, demoted headings and removed repeated lines |
-| `--chunks` | Show the chunks as they will be embedded (all, or of `--section`) |
+<table style="width:100%">
+<colgroup><col style="width:40%"><col style="width:60%"></colgroup>
+<thead><tr><th>Option</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>DOC_ID</code></td><td>Document to show (required)</td></tr>
+<tr><td><code>--section NUMBER</code></td><td>Print one section's content, e.g. <code>3.1.7</code></td></tr>
+<tr><td><code>--details</code></td><td>Also list unmatched TOC entries, demoted headings and removed repeated lines</td></tr>
+<tr><td><code>--chunks</code></td><td>Show the chunks as they will be embedded (all, or of <code>--section</code>)</td></tr>
+</tbody>
+</table>
 
 ```bash
 uv run kb inspect install-guide                 # section tree with pages and sizes
@@ -104,32 +123,46 @@ uv run kb inspect install-guide --chunks --section 3.1  # that section's chunks
 
 ### `kb chunk` — build and store sections and chunks
 
-| Option | Meaning |
-|---|---|
-| `--doc DOC_ID` | Only this document; repeatable |
+<table style="width:100%">
+<colgroup><col style="width:40%"><col style="width:60%"></colgroup>
+<thead><tr><th>Option</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>--doc DOC_ID</code></td><td>Only this document; repeatable</td></tr>
+<tr><td><code>--force</code></td><td>Rebuild documents that are up to date too: needed after changes to the structure or chunking code or to <code>config/domain.yaml</code></td></tr>
+</tbody>
+</table>
 
-Always rebuilds from the cached parse and replaces the document's sections and chunks in SQLite; the next `kb index` then re-embeds it.
+Builds sections and chunks from the cached parse and replaces the document's sections and chunks in SQLite; the next `kb index` then re-embeds it. A document is skipped when it is already chunked (or indexed) from the same parse, with the current chunker version, and its stored chunk headers still carry the manifest's current title and release; a changed file (re-parsed), a new title or release, or an older chunker version rebuilds it. So a plain `kb chunk` after adding documents only chunks the new ones, and `kb index` only embeds those.
 
 ```bash
-uv run kb chunk
-uv run kb chunk --doc sso-setup --doc role-overview
+uv run kb chunk                                      # new or changed documents
+uv run kb chunk --doc sso-setup --doc role-overview  # these two (if not up to date)
+uv run kb chunk --force                              # everything, after a code or domain.yaml change
 ```
 
 ### `kb coverage` — golden facts present in the chunks?
 
-| Option | Meaning |
-|---|---|
-| `--all` | List passing questions too, not only failures |
+<table style="width:100%">
+<colgroup><col style="width:40%"><col style="width:60%"></colgroup>
+<thead><tr><th>Option</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>--all</code></td><td>List passing questions too, not only failures</td></tr>
+</tbody>
+</table>
 
 Checks that every `must_include` string of the golden set appears in a stored chunk of the cited document and pages. Expected output: `40/40 answerable golden questions fully covered`.
 
 ### `kb index` — embed and write to Qdrant
 
-| Option | Meaning |
-|---|---|
-| `--doc DOC_ID` | Only this document; repeatable |
-| `--force` | Re-embed even if already indexed |
-| `--prune` | Delete points and rows of documents no longer in the manifest |
+<table style="width:100%">
+<colgroup><col style="width:40%"><col style="width:60%"></colgroup>
+<thead><tr><th>Option</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>--doc DOC_ID</code></td><td>Only this document; repeatable</td></tr>
+<tr><td><code>--force</code></td><td>Re-embed even if already indexed</td></tr>
+<tr><td><code>--prune</code></td><td>Delete points and rows of documents no longer in the manifest</td></tr>
+</tbody>
+</table>
 
 Re-embeds only (re)chunked documents; manifest-only changes update the Qdrant payload in place. Uses the GPU: run `ollama stop <model>` first.
 
@@ -141,19 +174,23 @@ uv run kb index --prune          # after removing rows from config/manifest.csv
 
 ### `kb search` — retrieval without the LLM
 
-| Option | Default | Meaning |
-|---|---|---|
-| `QUERY` | | The question (required, in quotes) |
-| `--groups GROUP` | `all` | User access group(s); repeatable or comma-separated |
-| `--release RELEASE` | any | Only documents that apply to this release, e.g. `R2024x` |
-| `--mode` | `hybrid` | `hybrid`, `dense` or `sparse` |
-| `--no-rerank` | | Skip the cross-encoder (fast; search order only) |
-| `--candidates N` | 30 | Chunks retrieved before reranking |
-| `--rerank-top N` | `KB_RERANK_TOP` (20) | Rerank only the first N candidates; `0` = all |
-| `--max-length N` | 512 | Reranker input length in tokens |
-| `--min-score X` | off | Drop context chunks with rerank score below X |
-| `--show N` | 10 | Ranked results to print |
-| `--context` | | Print the full assembled context the LLM would receive |
+<table style="width:100%">
+<colgroup><col style="width:32%"><col style="width:8%"><col style="width:60%"></colgroup>
+<thead><tr><th>Option</th><th>Default</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>QUERY</code></td><td></td><td>The question (required, in quotes)</td></tr>
+<tr><td><code>--groups GROUP</code></td><td><code>all</code></td><td>User access group(s); repeatable or comma-separated</td></tr>
+<tr><td><code>--release RELEASE</code></td><td>any</td><td>Only documents that apply to this release, e.g. <code>R2024x</code></td></tr>
+<tr><td><code>--mode</code></td><td><code>hybrid</code></td><td><code>hybrid</code>, <code>dense</code> or <code>sparse</code></td></tr>
+<tr><td><code>--no-rerank</code></td><td></td><td>Skip the cross-encoder (fast; search order only)</td></tr>
+<tr><td><code>--candidates N</code></td><td>30</td><td>Chunks retrieved before reranking</td></tr>
+<tr><td><code>--rerank-top N</code></td><td><code>KB_RERANK_TOP</code> (20)</td><td>Rerank only the first N candidates; <code>0</code> = all</td></tr>
+<tr><td><code>--max-length N</code></td><td>512</td><td>Reranker input length in tokens</td></tr>
+<tr><td><code>--min-score X</code></td><td>off</td><td>Drop context chunks with rerank score below X</td></tr>
+<tr><td><code>--show N</code></td><td>10</td><td>Ranked results to print</td></tr>
+<tr><td><code>--context</code></td><td></td><td>Print the full assembled context the LLM would receive</td></tr>
+</tbody>
+</table>
 
 ```bash
 uv run kb search "Which port does the application server use?"
@@ -167,39 +204,51 @@ uv run kb search "..." --rerank-top 0 --min-score 0.3                           
 
 ### `kb models` — model catalogue
 
-| Command | What it does |
-|---|---|
-| `uv run kb models list` | Validate `config/models.yaml` (every problem listed at once) and show each model: adapter, local / external, whether its key is set, context and output size, model id and the roles it has |
-| `uv run kb models check [--model NAME]` | Send every configured model (or the named ones) a tiny text prompt and a JSON prompt: reachable, seconds, token counts, whether JSON works. Models without a key are skipped; costs a few tokens per model |
+<table style="width:100%">
+<colgroup><col style="width:40%"><col style="width:60%"></colgroup>
+<thead><tr><th>Command</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><code>uv run kb models list</code></td><td>Validate <code>config/models.yaml</code> (every problem listed at once) and show each model: adapter, local / external, whether its key is set, context and output size, model id and the roles it has</td></tr>
+<tr><td><code>uv run kb models check [--model NAME]</code></td><td>Send every configured model (or the named ones) a tiny text prompt and a JSON prompt: reachable, seconds, token counts, whether JSON works. Models without a key are skipped; costs a few tokens per model</td></tr>
+</tbody>
+</table>
 
 Without `config/models.yaml` it shows the catalogue built from the older settings (`LLM_MODEL`, `OPENAI_*`).
 
 ### `kb cache` — answer cache
 
-| Command | What it does |
-|---|---|
-| `uv run kb cache stats` | Entries (of the current corpus and stale), answers served from the cache, the most-served questions |
-| `uv run kb cache clear` | Remove every entry |
-| `uv run kb cache clear --stale` | Remove only entries of an older corpus (they can no longer be hit; storing a new answer also removes them) |
+<table style="width:100%">
+<colgroup><col style="width:40%"><col style="width:60%"></colgroup>
+<thead><tr><th>Command</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><code>uv run kb cache stats</code></td><td>Entries (of the current corpus and stale), answers served from the cache, the most-served questions</td></tr>
+<tr><td><code>uv run kb cache clear</code></td><td>Remove every entry</td></tr>
+<tr><td><code>uv run kb cache clear --stale</code></td><td>Remove only entries of an older corpus (they can no longer be hit; storing a new answer also removes them)</td></tr>
+</tbody>
+</table>
 
 ### `kb ask` — answer a question with citations
 
-| Option | Default | Meaning |
-|---|---|---|
-| `QUERY` | | The question (required, in quotes) |
-| `--groups GROUP` | `all` | User access group(s); repeatable or comma-separated |
-| `--release RELEASE` | any | Only documents that apply to this release, e.g. `R2024x` |
-| `--model NAME` | the answer role in `config/models.yaml` | Answer model by catalogue name (`auto`, `ollama`, `openai` still accepted). External models only see documents with `external_ok`; otherwise the local fallback answers, with a notice |
-| `--mode` | `hybrid` | `hybrid`, `dense` or `sparse` |
-| `--no-rerank` | | Skip the reranker; without a rerank score the gate always passes |
-| `--rerank-top N` | `KB_RERANK_TOP` (20) | Rerank only the first N candidates; `0` = all |
-| `--show-context` | | Print the context sent to the LLM before the answer |
-| `--no-stream` | | Print the answer only when it is complete |
-| `--no-compare` | | Answer comparison questions with one search instead of one search per side |
-| `--no-refusal-retry` | `KB_REFUSAL_RETRY` (on) | No second attempt with the best-matching sources when the model finds no answer |
-| `--no-cache` | `KB_ANSWER_CACHE` (on) | Neither read nor store the answer cache: always search and ask the model |
+<table style="width:100%">
+<colgroup><col style="width:26%"><col style="width:14%"><col style="width:60%"></colgroup>
+<thead><tr><th>Option</th><th>Default</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>QUERY</code></td><td></td><td>The question (required, in quotes)</td></tr>
+<tr><td><code>--groups GROUP</code></td><td><code>all</code></td><td>User access group(s); repeatable or comma-separated</td></tr>
+<tr><td><code>--release RELEASE</code></td><td>any</td><td>Only documents that apply to this release, e.g. <code>R2024x</code></td></tr>
+<tr><td><code>--model NAME</code></td><td>the answer role in <code>config/models.yaml</code></td><td>Answer model by catalogue name (<code>auto</code>, <code>ollama</code>, <code>openai</code> still accepted). External models only see documents with <code>external_ok</code>; otherwise the local fallback answers, with a notice</td></tr>
+<tr><td><code>--mode</code></td><td><code>hybrid</code></td><td><code>hybrid</code>, <code>dense</code> or <code>sparse</code></td></tr>
+<tr><td><code>--no-rerank</code></td><td></td><td>Skip the reranker; without a rerank score the gate always passes</td></tr>
+<tr><td><code>--rerank-top N</code></td><td><code>KB_RERANK_TOP</code> (20)</td><td>Rerank only the first N candidates; <code>0</code> = all</td></tr>
+<tr><td><code>--show-context</code></td><td></td><td>Print the context sent to the LLM before the answer</td></tr>
+<tr><td><code>--no-stream</code></td><td></td><td>Print the answer only when it is complete</td></tr>
+<tr><td><code>--no-compare</code></td><td></td><td>Answer comparison questions with one search instead of one search per side</td></tr>
+<tr><td><code>--no-refusal-retry</code></td><td><code>KB_REFUSAL_RETRY</code> (on)</td><td>No second attempt with the best-matching sources when the model finds no answer</td></tr>
+<tr><td><code>--no-cache</code></td><td><code>KB_ANSWER_CACHE</code> (on)</td><td>Neither read nor store the answer cache: always search and ask the model</td></tr>
+</tbody>
+</table>
 
-After the answer it prints the sources, any notes (removed citations, provider choice, a comparison answered with one search, an answer found on the second attempt), the status (`answered`, or `not found` by the gate or by the LLM), timings and the trace ID.
+After the answer it prints the sources (each with its file path below it, full or relative per `KB_SOURCE_PATH`), any notes (removed citations, provider choice, a comparison answered with one search, an answer found on the second attempt), the status (`answered`, or `not found` by the gate or by the LLM), timings and the trace ID.
 
 ```bash
 uv run kb ask "How do I enable single sign-on?"
@@ -215,10 +264,14 @@ uv run kb ask "..." --model claude-opus                                      # a
 
 Starts the chat API and web UI; endpoints, the chat turn and the UI are described in [api.md](api.md).
 
-| Option | Default | Meaning |
-|---|---|---|
-| `--host` | `KB_API_HOST` (127.0.0.1) | Interface to listen on; keep the loopback address (users are not authenticated) |
-| `--port` | `KB_API_PORT` (8000) | Port |
+<table style="width:100%">
+<colgroup><col style="width:12%"><col style="width:29%"><col style="width:59%"></colgroup>
+<thead><tr><th>Option</th><th>Default</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>--host</code></td><td><code>KB_API_HOST</code> (127.0.0.1)</td><td>Interface to listen on; keep the loopback address (users are not authenticated)</td></tr>
+<tr><td><code>--port</code></td><td><code>KB_API_PORT</code> (8000)</td><td>Port</td></tr>
+</tbody>
+</table>
 
 ```bash
 uv run kb serve                 # http://127.0.0.1:8000 ; models load once (~20 s)
@@ -244,12 +297,16 @@ Reports go to `data/eval/` (`retrieval-*.json`, `answers-*.json`).
 
 Replays candidate gate thresholds (`KB_NOT_FOUND_SCORE`) on the latest full `kb eval-answers` report per answer model, without running any model, and recommends one. Details in [evaluation.md](evaluation.md#kb-calibrate--the-not-found-threshold).
 
-| Option | Default | Meaning |
-|---|---|---|
-| `--report PATH` | latest full run per answer model | Answer evaluation report(s) to use; repeatable |
-| `--thresholds LIST` | 0 to 0.9 | Candidate thresholds, comma-separated |
-| `--all` | reviewed questions only | Count every golden question |
-| `--details` | | List the questions lost or unmeasured per threshold |
+<table style="width:100%">
+<colgroup><col style="width:17%"><col style="width:24%"><col style="width:59%"></colgroup>
+<thead><tr><th>Option</th><th>Default</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>--report PATH</code></td><td>latest full run per answer model</td><td>Answer evaluation report(s) to use; repeatable</td></tr>
+<tr><td><code>--thresholds LIST</code></td><td>0 to 0.9</td><td>Candidate thresholds, comma-separated</td></tr>
+<tr><td><code>--all</code></td><td>reviewed questions only</td><td>Count every golden question</td></tr>
+<tr><td><code>--details</code></td><td></td><td>List the questions lost or unmeasured per threshold</td></tr>
+</tbody>
+</table>
 
 ```bash
 uv run kb calibrate                                   # after a full kb eval-answers
@@ -274,7 +331,7 @@ uv run kb index
 uv run kb coverage
 ```
 
-**After changing the structure or chunking code:** `uv run kb chunk` (all, or the affected `--doc`s), then `uv run kb index`, `uv run kb coverage` and `uv run kb eval --configs dense,hybrid+rr10`.
+**After changing the structure or chunking code, or `config/domain.yaml`:** `uv run kb chunk --force` (all, or the affected `--doc`s), then `uv run kb index`, `uv run kb coverage` and `uv run kb eval --configs dense,hybrid+rr10`.
 
 **Only manifest values changed** (groups, external_ok, release range, version): `uv run kb manifest validate`, then `uv run kb index` updates the payloads without re-embedding.
 

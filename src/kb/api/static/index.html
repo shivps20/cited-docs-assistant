@@ -69,6 +69,7 @@ main { display: flex; flex-direction: column; min-height: 0; }
 .answer h3, .answer h4 { margin: 10px 0 4px; font-size: 14.5px; }
 sup.cite { color: var(--accent); cursor: pointer; font-weight: 600; padding: 0 1px; }
 .sources { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; font-size: 13px; }
+.sources .path { font-size: 11.5px; color: var(--muted); word-break: break-all; margin: 0 0 4px 1.6em; }
 .sources .h, .ctx summary { font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
 .src { padding: 2px 6px; border-radius: 5px; }
 .src.flash { background: var(--accent-soft); }
@@ -219,13 +220,13 @@ function addAssistantCard() {
 
 function sourcesHtml(sources) {
   if (!sources || !sources.length) return "";
-  return `<div class="sources"><div class="h">Sources</div>${sources.map((s) => `<div class="src" data-n="${s.n}">${esc(s.line)}</div>`).join("")}</div>`;
+  return `<div class="sources"><div class="h">Sources</div>${sources.map((s) => `<div class="src" data-n="${s.n}">${esc(s.line)}${s.path ? `<div class="path">${esc(s.path)}</div>` : ""}</div>`).join("")}</div>`;
 }
 
 function contextHtml(units) {
   if (!units || !units.length) return "";
   return `<details class="ctx"><summary>Context sent to the LLM (${units.length})</summary>${units.map((u) =>
-    `<div class="unit"><div class="c">[${u.n}] ${esc(u.citation)} · score ${u.score} · ${u.tokens} tokens</div>${(u.same_text || []).length ? `<div class="m">same text: ${esc(u.same_text.join("; "))}</div>` : ""}<pre>${esc(u.text)}</pre></div>`).join("")}</details>`;
+    `<div class="unit"><div class="c">[${u.n}] ${esc(u.citation)} · score ${u.score} · ${u.tokens} tokens</div>${u.path ? `<div class="m">${esc(u.path)}</div>` : ""}${(u.same_text || []).length ? `<div class="m">same text: ${esc(u.same_text.join("; "))}</div>` : ""}<pre>${esc(u.text)}</pre></div>`).join("")}</details>`;
 }
 
 const REASONS = { wrong: "Wrong", incomplete: "Incomplete", should_have_answered: "Should have answered",
