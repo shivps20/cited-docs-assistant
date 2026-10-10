@@ -8,7 +8,8 @@ How a question is answered, from the document manifest to a cited answer. For co
 Ingestion (offline)                         Query (per request)
 -------------------                         -------------------
 documents + manifest                        question
-  -> Docling parse                            -> condense follow-up, route (comparison: one search per side)
+  -> Docling parse                            -> condense follow-up; asked before? answer from the cache
+                                              -> route (comparison: one search per side)
   -> structure-aware chunks                   -> hybrid search in Qdrant (dense + sparse, RRF)
   -> metadata from manifest                   -> filters: access groups, release, latest revision
   -> bge-m3 dense + sparse                    -> rerank -> confidence gate -> assemble context
@@ -48,7 +49,7 @@ uv run kb ask "..." --groups internal --release R2025x --show-context
 
 `kb ask` runs retrieval, then:
 
-1. **Gate:** if nothing was found, or the best rerank score is below `KB_NOT_FOUND_SCORE` (0.1), it replies "not found" without calling the LLM.
+1. **Gate:** if nothing was found, or the best rerank score is below `KB_NOT_FOUND_SCORE` (0.1), it replies "not found" without calling the LLM. The value is calibrated with `kb calibrate` ([evaluation.md](evaluation.md#kb-calibrate--the-not-found-threshold)): 0.1 sits midway between the unanswerable questions the gate can catch and the lowest-scoring answered one; most unanswerable questions score as high as answerable ones, so the prompt's refusal rule (below) does the rest.
 2. **Prompt:** the context goes to the LLM as numbered sources (document, release, section, pages). The rules: answer only from the sources, cite `[n]` after every statement, copy article numbers, URLs, commands and queries exactly, give procedures as numbered steps, and reply with a fixed "not found" sentence when the sources do not contain the answer (this catches on-topic near misses that the gate lets through). A "not found" from the model is asked once more with only the best 3 sources (2 per side for a comparison): the small model sometimes gives up when the answering section sits among several partly related ones. A second refusal stands (`KB_REFUSAL_RETRY=false` switches this off).
 3. **Model:** chosen from the model catalogue (`config/models.yaml`, see [configuration.md](configuration.md)): the answer role's model, or the one a request names. The model registry (`kb.llm.registry`) tries it, then its fallbacks, then the catalogue's local fallback model. **Privacy policy:** an external model (OpenAI, Mistral, Gemini, Claude) only gets a context in which **every** source has `external_ok = true`; otherwise external models are skipped and the local model answers, with a notice saying why. Models whose key is not set are skipped the same way, and a model that fails or refuses hands over to the next one. Without `models.yaml`: Ollama (`LLM_MODEL`), plus OpenAI when `OPENAI_API_KEY` and `OPENAI_MODEL` are set (`KB_LLM_PROVIDER=auto`).
 4. **Citations:** `[n]` markers that do not match a source are removed; the **Sources** list under the answer is built from the cited numbers, never written by the LLM.
@@ -62,5 +63,9 @@ uv run kb ask "..." --groups internal --release R2025x --show-context
 5. **Read more (per model, off by default):** runs only when the answer model's catalogue profile has `compare_read: true`; with qwen2.5 7B it did not improve answers (TO-5.10), so the example catalogue leaves it off everywhere. When on: when the gate passes, the local LLM sees each side's best guide as a table of contents (section numbers and headings; sections already in the context are marked) and picks up to 2 more sections per side (JSON). The server reads them, with the same access check as search (user's groups, latest edition only), and appends them, at most 1,500 tokens together; a long section is read as its first chunks. The model only sees outlines of documents the search already returned for that user. One extra LLM call per comparison (~3–6 s).
 
 The gate, provider choice and citation checks are the same; the trace has `route = 'compare'` with a `decompose` stage and one set of search stages per side. `--no-compare` answers comparisons with one search (to compare the two paths).
+
+### Answer cache
+
+A question asked again under the same conditions is answered from SQLite (`answer_cache`) in milliseconds, without search, reranking or the LLM. The key is the normalised question (case, spacing and trailing punctuation ignored; for a chat follow-up the condensed standalone question), the user's access groups, the release filter and retrieval options, a fingerprint of the indexed corpus (every document's file hash, manifest metadata and index version, so re-indexing a changed document or changing the manifest retires every entry; a forced re-index of an unchanged document keeps them, since its answers stay valid), and the answer model's profile, the system prompt and the answer settings. Only clean answers are stored: answered (never "not found"), by the requested model itself (no fallback after an error, no model swapped by the privacy policy). A hit keeps its own trace (`cache_hit = 1`, a `cache` stage naming the stored answer's trace) and a notice saying when it was first answered; a 👎 removes the entry. `KB_ANSWER_CACHE=false` or `kb ask --no-cache` switch it off; evaluation never uses it.
 
 The answer streams as it is generated (~25 tokens/s with qwen2.5 7B on the 6 GB GPU; the first question after a pause also loads the model, 5–25 s). The whole run (retrieval, gate, generation, citations) is one trace with `route = 'answer'` (or `'compare'`).

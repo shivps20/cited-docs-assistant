@@ -14,13 +14,14 @@ All settings come from `.env` (see [.env.example](../.env.example)) through `kb.
 | `EMBED_MODEL_PATH`, `RERANK_MODEL_PATH`, `DOCLING_ARTIFACTS_PATH` | `models/...` | Local models |
 | `HF_HUB_OFFLINE` | `1` | Never download models at runtime |
 | `KB_RERANK_TOP` | `20` | Candidates reranked per search (see [architecture.md](architecture.md#retrieval)) |
-| `KB_NOT_FOUND_SCORE` | `0.1` | Reply "not found" without the LLM below this top rerank score (see [architecture.md](architecture.md#answering)) |
+| `KB_NOT_FOUND_SCORE` | `0.1` | Reply "not found" without the LLM below this top rerank score (see [architecture.md](architecture.md#answering)); check a value with `kb calibrate` ([evaluation.md](evaluation.md#kb-calibrate--the-not-found-threshold)) |
 | `KB_REFUSAL_RETRY` | `true` | When the model replies "not found", ask once more with only the best-matching sources (3, or 2 per side of a comparison) |
+| `KB_ANSWER_CACHE` | `true` | Answer a repeated question from the answer cache (same question, groups, release, corpus, model and prompt; see [architecture.md](architecture.md#answer-cache)) |
 | `KB_LLM_PROVIDER` | `auto` | `auto` (the catalogue's answer role), `ollama` (the local fallback) or `openai`; superseded by `config/models.yaml` roles |
 | `KB_USERS_PATH` | `config/users.yaml` | Chat API users and their access groups |
 | `KB_API_HOST`, `KB_API_PORT` | `127.0.0.1`, `8000` | Where `kb serve` listens (keep loopback: no authentication) |
 | `KB_DOMAIN_PATH` | `config/domain.yaml` | Organisation-specific text rules (see below) |
-| `KB_GOLDEN_PATH` | `eval/golden.json` | Golden question set used by `kb coverage`, `kb eval`, `kb eval-answers` |
+| `KB_GOLDEN_PATH` | `eval/golden.json` | Golden question set used by `kb coverage`, `kb eval`, `kb eval-answers`, `kb calibrate` and `eval/check_golden.py` |
 | `KB_MODELS_PATH` | `config/models.yaml` | Model catalogue: which language models exist and which job each one does (below). Without the file: `LLM_MODEL`, plus OpenAI when `OPENAI_*` is set |
 | `LLM_TEMPERATURE`, `LLM_MAX_TOKENS` | `0`, `1500` | Ollama sampling temperature; answer length cap (both providers) |
 | `OLLAMA_HOST`, `LLM_MODEL`, `LLM_NUM_CTX` | `127.0.0.1:11434`, `qwen2.5:7b-instruct`, `8192` | Local LLM |
@@ -69,7 +70,7 @@ Changing `boilerplate_patterns` or `command_patterns` changes sections and chunk
 | `family`, `version` | `install-guide`, `2.0` | The highest version per family is the latest revision |
 | `release_min`, `release_max` | `R2024x`, *(blank)* | Release range the document applies to; blank = open-ended |
 | `allowed_groups` | `all` or `internal` | `;`-separated access groups |
-| `external_ok` | `true` | May its text be sent to OpenAI |
+| `external_ok` | `true` | May its text be sent to an external LLM (OpenAI, Mistral, Gemini, Claude) |
 | `category` | `installation` | One of: installation, administration, authentication, infrastructure, upgrade, performance, applications, functional, troubleshooting (defined in `kb.manifest.CATEGORIES`) |
 
 Adding documents:

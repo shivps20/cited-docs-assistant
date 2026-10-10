@@ -73,13 +73,14 @@ class ModelRegistry:
 
     def for_role(self, role: str, *, max_output_tokens: int | None = None) -> LLMProvider:
         """The adapter for `role` (planner, condenser, judge, answer); the local fallback when the role's
-        model has no key. max_output_tokens: a separate adapter with a smaller answer cap (condenser)."""
+        model has no key. max_output_tokens: a separate adapter with this answer cap (the condenser's
+        short one, the judge's larger one)."""
         profile = self.catalogue.for_role(role)
         if not self.ready(profile.name):
             profile = self.catalogue.fallback_profile
         if max_output_tokens is None or profile.name in self._given:
             return self.provider(profile.name)
-        capped = dataclasses.replace(profile, max_output_tokens=min(max_output_tokens, profile.max_output_tokens))
+        capped = dataclasses.replace(profile, max_output_tokens=max_output_tokens)
         return make_provider(capped)
 
     def resolve(self, requested: str | None) -> str:

@@ -42,7 +42,7 @@ def test_load_users_reports_every_problem(tmp_path):
 
 @pytest.fixture
 def db_path(tmp_path):
-    path = tmp_path / "kb.core.db"
+    path = tmp_path / "kb.db"
     conn = connect(path, check_schema=False)
     migrate(conn)
     conn.close()

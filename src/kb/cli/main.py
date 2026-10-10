@@ -3,7 +3,8 @@
 import argparse
 import sys
 
-from kb.cli.evaluation import eval_answers_command, eval_command
+from kb.cli.cache import cache_clear, cache_stats
+from kb.cli.evaluation import calibrate_command, eval_answers_command, eval_command
 from kb.cli.ingest import (
     chunk_documents,
     index_documents,
@@ -90,6 +91,11 @@ def main(argv: list[str] | None = None) -> int:
     ask.add_argument("--no-refusal-retry", action="store_true",
                      help="do not ask again with the best sources only when the model finds no answer "
                           "(the retry is on unless KB_REFUSAL_RETRY=false)")
+    ask.add_argument("--no-cache", action="store_true",
+                     help="neither read nor store the answer cache (the cache is on unless KB_ANSWER_CACHE=false)")
+    cache = commands.add_parser("cache", help="answer cache: statistics or clear")
+    cache.add_argument("action", choices=["stats", "clear"])
+    cache.add_argument("--stale", action="store_true", help="clear: only entries of an older corpus")
     eval_answers = commands.add_parser("eval-answers", help="evaluate generated answers against the golden set")
     eval_answers.add_argument("--questions", help="comma-separated golden ids, e.g. q001,q012 (default: all)")
     eval_answers.add_argument("--types", help="comma-separated question types: lookup, howto, compare, unanswerable")
@@ -104,6 +110,12 @@ def main(argv: list[str] | None = None) -> int:
                               help="no second attempt after a refusal (baseline for the refusal retry)")
     eval_answers.add_argument("--details", action="store_true",
                               help="also print missing strings and unsupported claims per question")
+    calibrate = commands.add_parser("calibrate", help="replay gate thresholds on answer evaluation reports")
+    calibrate.add_argument("--report", action="append", metavar="PATH",
+                           help="answer evaluation report(s) to use (default: the latest full run per answer model)")
+    calibrate.add_argument("--thresholds", help="comma-separated candidate thresholds (default: 0 to 0.9)")
+    calibrate.add_argument("--all", action="store_true", help="count every golden question, not only reviewed ones")
+    calibrate.add_argument("--details", action="store_true", help="list the questions lost or unmeasured per threshold")
     eval_cmd = commands.add_parser("eval", help="evaluate retrieval configurations against the golden set")
     eval_cmd.add_argument("--configs", help="comma-separated subset of: dense, sparse, hybrid, hybrid+rr10, "
                                             "hybrid+rr15@256, hybrid+rr30 (default: all)")
@@ -124,6 +136,8 @@ def _run(args: argparse.Namespace) -> int:
     """Run the chosen subcommand."""
     if args.command == "manifest":
         return {"validate": manifest_validate, "scan": manifest_scan}[args.action]()
+    if args.command == "cache":
+        return cache_stats() if args.action == "stats" else cache_clear(args.stale)
     if args.command == "models":
         return models_list() if args.action == "list" else models_check(args.model)
     if args.command == "parse":
@@ -150,6 +164,8 @@ def _run(args: argparse.Namespace) -> int:
         return eval_command(args)
     if args.command == "eval-answers":
         return eval_answers_command(args)
+    if args.command == "calibrate":
+        return calibrate_command(args)
     return 2
 
 

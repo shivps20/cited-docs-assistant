@@ -175,7 +175,7 @@ class FakeLLM:
 
 @pytest.fixture
 def conn(tmp_path):
-    db = tmp_path / "kb.core.db"
+    db = tmp_path / "kb.db"
     migrate(connect(db, check_schema=False))
     c = connect(db)
     yield c

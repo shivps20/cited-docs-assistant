@@ -1,4 +1,4 @@
-"""Create the SQLite database (data/kb.core.db) and apply schema migrations.
+"""Create the SQLite database (data/kb.db) and apply schema migrations.
 
 Idempotent: safe to re-run. The schema itself lives in kb.core.db.MIGRATIONS.
 
@@ -15,7 +15,7 @@ from kb.core.db import SCHEMA_VERSION, connect, migrate
 
 
 def main() -> int:
-    """Create data/kb.core.db or apply pending migrations; with --reset, delete and recreate it first."""
+    """Create data/kb.db or apply pending migrations; with --reset, delete and recreate it first."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--reset", action="store_true", help="delete the database file and recreate it")
     parser.add_argument("--yes", action="store_true", help="skip the --reset confirmation prompt")

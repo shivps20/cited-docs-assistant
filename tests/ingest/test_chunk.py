@@ -129,7 +129,7 @@ def test_pptx_header_uses_slide_range_and_no_release_for_any():
 
 @pytest.fixture
 def conn(tmp_path):
-    db = tmp_path / "kb.core.db"
+    db = tmp_path / "kb.db"
     migrate(connect(db, check_schema=False))
     c = connect(db)
     c.execute("INSERT INTO documents (doc_id, source_path, file_hash, status) VALUES ('doc-a', 'a.pdf', 'h', 'parsed')")

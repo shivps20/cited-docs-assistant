@@ -55,7 +55,8 @@ Runs every golden question through the full pipeline (full access, no release fi
 - **Status:** answerable questions answered, unanswerable ones refused (by the gate or the LLM).
 - **Content:** share of `must_include` strings, article numbers and URLs from the expected answer that appear in the answer.
 - **Citations:** precision (cited sources on a golden document and pages) and document recall (golden documents cited, which matters for comparisons); whether the context held a golden source at all, to separate retrieval from generation failures.
-- **Faithfulness (LLM judge):** qwen splits the answer into claims and quotes the evidence for each; a claim counts as supported only if its quote occurs word for word in the context. Same model judging its own answers: read flagged claims, don't treat 1.0 as proof.
+- **Faithfulness (LLM judge):** qwen splits the answer into claims and quotes the evidence for each; a claim counts as supported only if its quote occurs word for word in the context. A claim without a usable quote still counts when every distinctive value in it (error codes, numbers of 3+ digits, file names, paths, `inline code`) is in the context; the summary shows how many claims were supported this way. Answers over 1,200 characters are judged in parts (split between paragraphs), with a judge output cap of 3,000 tokens. Same model judging its own answers: read flagged claims, don't treat 1.0 as proof.
+- **Command check (no LLM):** every line of a code block and every `inline code` span in the answer must appear in the context, comparing letters and digits only (case, spacing, punctuation and prompt styles such as `MQL>` / `MQL >` are ignored; a changed value is not). It catches a changed value in a command, such as `octreedepth 6` where the source says 5. Reported in the summary; `--details` lists the commands that were not found.
 - **Style flags:** answered on the comparison path (C), no `[n]` markers (M), a not-found sentence removed (N), talk about "the sources" (T), answered only on the retry with fewer sources (R; the summary lists them), sections added by the comparison read step (S, only for a model with `compare_read: true`).
 
 One line per question as it runs, then a summary; the full report (answers, raw model output, unsupported claims, settings and a prompt hash for comparing runs) goes to `data/eval/answers-<timestamp>.json`. With the judge, expect ~30–40 s per question.
@@ -66,3 +67,24 @@ uv run kb eval-answers --types unanswerable                # refusals only
 uv run kb eval-answers --no-judge                          # whole set, without the judge (~10 s per question)
 uv run kb eval-answers                                     # whole set with the judge (~25-30 s per question)
 ```
+
+## `kb calibrate` — the "not found" threshold
+
+| Option | Meaning |
+|---|---|
+| `--report PATH` | Answer evaluation report(s) to use, repeatable (default: the latest full run per answer model in `data/eval/`) |
+| `--thresholds LIST` | Candidate thresholds, comma-separated (default: 0 to 0.9) |
+| `--all` | Count every golden question, not only those marked `status: reviewed` |
+| `--details` | List, per threshold, the questions whose answers would be lost or whose outcome is unmeasured |
+
+The gate refuses without calling the LLM when the top rerank score is below `KB_NOT_FOUND_SCORE`. `kb calibrate` replays every candidate threshold on an evaluation report without running any model: a question scoring below the candidate is refused by the gate, every other question keeps the outcome the report recorded. That is exact for thresholds at or above the one the report was run with; below it, questions the gate refused at run time would reach the LLM with an unknown outcome ("unmeasured"). Answers are re-scored against the current golden set, so a report from before a golden-set review still counts correctly.
+
+Per threshold it shows answers lost (and how many of them had every key fact), wrong refusals, unanswerable questions refused (and how many by the gate), unanswerable questions let through, LLM calls saved, answers the refusal retry rescued that still reach the LLM, and unmeasured questions. It then recommends the midpoint between the highest-scoring unanswerable question the gate can catch and the lowest-scoring answered question (the widest margin that loses no answer), lists refusals that happened despite a high score (a generation problem, not the gate's), and counts real questions and feedback from the traces: 👎 reasons are counted, a "should have answered" on a gate refusal just below the threshold is reported as evidence for a lower one (far below it, as a matter of access or coverage), and a "should have refused" on an answer is placed below or above the threshold. The result is also saved as `data/eval/calibration-<timestamp>.json`.
+
+```bash
+uv run kb calibrate                      # reviewed questions, latest full run per answer model
+uv run kb calibrate --all --details      # every question, with the questions behind each number
+```
+
+Result on the 221-document corpus (2026-10-10, 30 reviewed questions): keep 0.10. It sits midway between the highest-scoring unanswerable question the gate can catch (0.053) and the lowest-scoring answered one (0.147, a broad question); 10 of the 12 unanswerable questions score as high as answered ones, so only the model's refusal can catch them. Re-run `kb calibrate` after `kb eval-answers` with a new answer model.
+

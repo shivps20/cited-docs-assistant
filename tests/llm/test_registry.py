@@ -89,3 +89,10 @@ def test_from_providers_keeps_the_older_shape():
     assert reg.catalogue.roles["answer"] == "openai" and reg.for_role("planner").name == "ollama"
     assert [p.name for p in reg.answer_chain("auto", INTERNAL)[0]] == ["ollama"]
     assert [p.name for p in reg.answer_chain("openai", CLEARED)[0]] == ["openai", "ollama"]
+
+
+def test_a_role_cap_can_be_raised_or_lowered():
+    reg = registry()                       # no fakes: real (unconnected) Ollama adapters are built
+    reg.catalogue.models["local"] = ModelProfile("local", "ollama", "qwen", max_output_tokens=1500)
+    assert reg.for_role("judge", max_output_tokens=3000).options["num_predict"] == 3000
+    assert reg.for_role("condenser", max_output_tokens=200).options["num_predict"] == 200

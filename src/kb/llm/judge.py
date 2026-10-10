@@ -6,6 +6,13 @@ Faithfulness = supported claims / all claims.
 
 Caveat: a model judging its own output is lenient on its own mistakes, so treat the score as a
 lower bound on problems (unsupported claims it does flag are worth reading), not as proof.
+
+Two corrections in code (Phase 7, TD-12):
+- A claim the judge leaves without a usable quote still counts as supported when every distinctive
+  value in it (codes such as ORA-01157, numbers of 3+ digits, file names, paths, identifiers, `inline
+  code`) occurs in the sources: the 7B judge often lumps a list into one claim without a quote.
+- Long answers are judged in parts (paragraph groups of about PART_CHARS), so the judge's JSON reply
+  never runs past its output cap (9 long answers failed that way in the Phase 5 run).
 """
 
 import json
@@ -14,7 +21,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from kb.llm.prompts import format_context
-from kb.llm.providers import LLMError, OllamaProvider
+from kb.llm.providers import LLMError, LLMProvider
 from kb.retrieve.assemble import ContextUnit
 
 JUDGE_SYSTEM = """You verify answers against sources. Be strict and literal.
@@ -44,6 +51,7 @@ class Claim:
     source: int | None = None
     evidence: str = ""              # the judge's quote from the sources
     evidence_found: bool = False    # the quote really occurs in the sources (checked in code)
+    by_values: bool = False         # supported because all its distinctive values occur in the sources
 
 
 @dataclass
@@ -92,6 +100,55 @@ def evidence_in_sources(evidence: str, sources_text: str) -> bool:
     return bool(pieces) and all(f" {p} " in haystack for p in pieces)
 
 
+PART_CHARS = 1200      # answers longer than this are judged in parts
+_VALUE = re.compile(r"`([^`]{3,})`|\b[A-Za-z]{2,}-\d+\b|\b\d{3,}(?:\.\d+)*\b|\b[\w-]+(?:[./\\][\w-]+)+\b")
+
+
+def distinctive_values(text: str) -> list[str]:
+    """Values in a claim that can be checked literally: `inline code`, codes like ORA-01157, numbers
+    of 3+ digits (ports, versions), file names, paths and dotted identifiers."""
+    values = []
+    for match in _VALUE.finditer(text):
+        value = (match.group(1) or match.group(0)).strip()
+        if value and value not in values:
+            values.append(value)
+    return values
+
+
+def values_in_sources(claim: str, sources_text: str) -> bool:
+    """Does every distinctive value of the claim occur in the sources (case ignored)? False when the
+    claim has none (then only a quote can support it)."""
+    values = distinctive_values(claim)
+    haystack = sources_text.lower()
+    return bool(values) and all(v.lower() in haystack for v in values)
+
+
+def split_answer(answer: str, limit: int = PART_CHARS) -> list[str]:
+    """The answer in parts of about `limit` characters, cut only between paragraphs (code blocks and
+    lists stay whole); a short answer is one part."""
+    if len(answer) <= limit:
+        return [answer]
+    paragraphs, block, in_code = [], [], False
+    for line in answer.splitlines():
+        if line.strip().startswith("```"):
+            in_code = not in_code
+        block.append(line)
+        if not line.strip() and not in_code:
+            paragraphs.append("\n".join(block).strip())
+            block = []
+    if block:
+        paragraphs.append("\n".join(block).strip())
+    parts, current = [], ""
+    for paragraph in (p for p in paragraphs if p):
+        if current and len(current) + len(paragraph) > limit:
+            parts.append(current)
+            current = ""
+        current = f"{current}\n\n{paragraph}" if current else paragraph
+    if current:
+        parts.append(current)
+    return parts
+
+
 def parse_verdict(reply: str, sources_text: str = "") -> Verdict:
     """Read the judge's JSON reply; a malformed reply becomes a Verdict with an error.
 
@@ -111,6 +168,8 @@ def parse_verdict(reply: str, sources_text: str = "") -> Verdict:
             if sources_text:
                 claim.evidence_found = evidence_in_sources(evidence, sources_text)
                 claim.supported = claim.evidence_found
+                if not claim.supported and values_in_sources(claim.text, sources_text):
+                    claim.supported = claim.by_values = True
             claims.append(claim)
     except (json.JSONDecodeError, AttributeError, TypeError) as e:
         return Verdict(error=f"unreadable judge reply ({type(e).__name__}): {reply[:120]!r}")
@@ -118,12 +177,19 @@ def parse_verdict(reply: str, sources_text: str = "") -> Verdict:
     return Verdict(claims=[c for c in claims if c.text and not c.text.rstrip().endswith(":")])
 
 
-def judge_faithfulness(judge: OllamaProvider, answer: str, context: Sequence[ContextUnit]) -> Verdict:
-    """Ask the judge model which claims of `answer` the `context` supports (quotes checked in code)."""
-    try:
-        generation = judge.generate(judge_messages(answer, context), json_format=True)
-    except LLMError as e:
-        return Verdict(error=str(e))
-    verdict = parse_verdict(generation.text, "\n".join(u.text for u in context))
-    verdict.seconds = generation.seconds
-    return verdict
+def judge_faithfulness(judge: LLMProvider, answer: str, context: Sequence[ContextUnit]) -> Verdict:
+    """Ask the judge model which claims of `answer` the `context` supports (quotes checked in code).
+    A long answer is judged in parts and the claims are merged; a part that fails sets the error."""
+    sources_text = "\n".join(u.text for u in context)
+    merged = Verdict()
+    for part in split_answer(answer):
+        try:
+            generation = judge.generate(judge_messages(part, context), json_format=True)
+        except LLMError as e:
+            return Verdict(claims=merged.claims, error=str(e), seconds=merged.seconds)
+        verdict = parse_verdict(generation.text, sources_text)
+        merged.seconds += generation.seconds
+        if verdict.error:
+            return Verdict(claims=merged.claims, error=verdict.error, seconds=merged.seconds)
+        merged.claims.extend(verdict.claims)
+    return merged
