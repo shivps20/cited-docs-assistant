@@ -244,7 +244,7 @@ def test_feedback_is_stored_once_per_user_and_only_for_own_answers(app_env):
     add_trace(db, "trace-other", "internal_user")
     assert client.post("/api/feedback", json={"trace_id": "trace-own", "rating": 1}).json()["rating"] == 1
     again = client.post("/api/feedback", json={"trace_id": "trace-own", "rating": -1, "comment": "  wrong port  "})
-    assert again.json() == {"trace_id": "trace-own", "rating": -1, "comment": "wrong port"}
+    assert again.json() == {"trace_id": "trace-own", "rating": -1, "reason": None, "comment": "wrong port"}
     conn = connect(db)
     assert tuple(conn.execute("SELECT COUNT(*), MAX(rating) FROM feedback").fetchone()) == (1, -1)  # replaced, not added
     conn.close()
@@ -328,3 +328,19 @@ def test_chat_can_skip_the_cache(app_env):
     client, services, _ = app_env
     client.post("/api/chat", json={"question": "Which port?", "cache": False})
     assert services.calls[-1]["use_cache"] is False
+
+
+def test_thumbs_down_reason_is_stored_validated_and_shown_again(app_env):
+    client, _, db = app_env
+    sid = client.post("/api/sessions").json()["session_id"]
+    add_trace(db, "trace-r", "guest")
+    conn = connect(db)
+    sessions.add_message(conn, sid, "assistant", "Not found.", trace_id="trace-r")
+    conn.close()
+    saved = client.post("/api/feedback", json={"trace_id": "trace-r", "rating": -1, "reason": "should_have_answered"})
+    assert saved.json()["reason"] == "should_have_answered"
+    assert client.get(f"/api/sessions/{sid}").json()["messages"][0]["reason"] == "should_have_answered"
+    assert client.post("/api/feedback", json={"trace_id": "trace-r", "rating": 1, "reason": "wrong"}).status_code == 422
+    assert client.post("/api/feedback", json={"trace_id": "trace-r", "rating": -1, "reason": "rude"}).status_code == 422
+    client.post("/api/feedback", json={"trace_id": "trace-r", "rating": 1})          # a thumbs up clears the reason
+    assert client.get(f"/api/sessions/{sid}").json()["messages"][0]["reason"] is None

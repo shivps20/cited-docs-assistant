@@ -4,7 +4,7 @@ import argparse
 import sys
 
 from kb.cli.cache import cache_clear, cache_stats
-from kb.cli.evaluation import eval_answers_command, eval_command
+from kb.cli.evaluation import calibrate_command, eval_answers_command, eval_command
 from kb.cli.ingest import (
     chunk_documents,
     index_documents,
@@ -110,6 +110,12 @@ def main(argv: list[str] | None = None) -> int:
                               help="no second attempt after a refusal (baseline for the refusal retry)")
     eval_answers.add_argument("--details", action="store_true",
                               help="also print missing strings and unsupported claims per question")
+    calibrate = commands.add_parser("calibrate", help="replay gate thresholds on answer evaluation reports")
+    calibrate.add_argument("--report", action="append", metavar="PATH",
+                           help="answer evaluation report(s) to use (default: the latest full run per answer model)")
+    calibrate.add_argument("--thresholds", help="comma-separated candidate thresholds (default: 0 to 0.9)")
+    calibrate.add_argument("--all", action="store_true", help="count every golden question, not only reviewed ones")
+    calibrate.add_argument("--details", action="store_true", help="list the questions lost or unmeasured per threshold")
     eval_cmd = commands.add_parser("eval", help="evaluate retrieval configurations against the golden set")
     eval_cmd.add_argument("--configs", help="comma-separated subset of: dense, sparse, hybrid, hybrid+rr10, "
                                             "hybrid+rr15@256, hybrid+rr30 (default: all)")
@@ -158,6 +164,8 @@ def _run(args: argparse.Namespace) -> int:
         return eval_command(args)
     if args.command == "eval-answers":
         return eval_answers_command(args)
+    if args.command == "calibrate":
+        return calibrate_command(args)
     return 2
 
 

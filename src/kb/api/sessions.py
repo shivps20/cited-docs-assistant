@@ -12,6 +12,8 @@ import uuid
 from kb.api.users import User
 
 TITLE_CHARS = 80    # sessions are listed by their first question, cut to this length
+# Why an answer got a thumbs down: the last two say the "not found" decision was wrong (kb calibrate).
+FEEDBACK_REASONS = ("wrong", "incomplete", "should_have_answered", "should_have_refused")
 
 _NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
 
@@ -54,10 +56,10 @@ def list_sessions(conn: sqlite3.Connection, user_id: str, limit: int = 30) -> li
 
 def list_messages(conn: sqlite3.Connection, session_id: str, user_id: str | None = None) -> list[dict]:
     """All messages of a session in order. Assistant messages also carry their sources and gate decision
-    (from the trace) and, when user_id is given, that user's feedback rating and comment."""
+    (from the trace) and, when user_id is given, that user's feedback rating, reason and comment."""
     rows = conn.execute("""
         SELECT m.id, m.role, m.content, m.standalone_query, m.trace_id, m.created_at,
-               t.sources, t.gate_decision, f.rating, f.comment
+               t.sources, t.gate_decision, f.rating, f.reason, f.comment
         FROM messages m
         LEFT JOIN traces t ON t.trace_id = m.trace_id
         LEFT JOIN feedback f ON f.trace_id = m.trace_id AND f.user_id = ?
@@ -89,18 +91,22 @@ def recent_turns(conn: sqlite3.Connection, session_id: str, turns: int = 6) -> l
 
 
 def save_feedback(conn: sqlite3.Connection, trace_id: str, user_id: str, rating: int,
-                  comment: str | None = None) -> dict | None:
-    """Store (or replace) the user's rating of one answer; None if the trace is not that user's answer."""
+                  comment: str | None = None, reason: str | None = None) -> dict | None:
+    """Store (or replace) the user's rating of one answer; None if the trace is not that user's answer.
+    reason (one of FEEDBACK_REASONS) is kept only with a thumbs down; a thumbs up clears it."""
     owner = conn.execute("SELECT user_id FROM traces WHERE trace_id = ?", (trace_id,)).fetchone()
     if owner is None or owner["user_id"] != user_id:
         return None
+    if reason is not None and reason not in FEEDBACK_REASONS:
+        raise ValueError(f"unknown feedback reason {reason!r}")
+    reason = reason if rating < 0 else None
     with conn:
         conn.execute(f"""
-            INSERT INTO feedback (trace_id, user_id, rating, comment) VALUES (?, ?, ?, ?)
+            INSERT INTO feedback (trace_id, user_id, rating, comment, reason) VALUES (?, ?, ?, ?, ?)
             ON CONFLICT (trace_id, user_id) DO UPDATE SET rating = excluded.rating, comment = excluded.comment,
-                created_at = {_NOW}
-        """, (trace_id, user_id, rating, comment))
-    return {"trace_id": trace_id, "rating": rating, "comment": comment}
+                reason = excluded.reason, created_at = {_NOW}
+        """, (trace_id, user_id, rating, comment, reason))
+    return {"trace_id": trace_id, "rating": rating, "reason": reason, "comment": comment}
 
 
 def set_sticky_release(conn: sqlite3.Connection, session_id: str, release: str | None) -> None:

@@ -1,4 +1,5 @@
-"""`kb eval` and `kb eval-answers`: retrieval and answer evaluation against the golden set."""
+"""`kb eval`, `kb eval-answers` and `kb calibrate`: retrieval and answer evaluation against the golden set,
+and the gate threshold replayed on answer evaluation reports."""
 
 import sys
 
@@ -265,7 +266,7 @@ def eval_answers_command(args) -> int:
         "temperature": s.llm_temperature,
         "models": models.describe(),
         "rerank_top": s.rerank_top, "not_found_score": s.not_found_score, "judge": not args.no_judge,
-        "compare": not args.no_compare,
+        "compare": not args.no_compare, "refusal_retry": s.refusal_retry and not args.no_refusal_retry,
         "prompt_sha": hashlib.sha256(system_prompt().encode()).hexdigest()[:12],
     }
     out_dir = s.db_path.parent / "eval"
@@ -274,4 +275,132 @@ def eval_answers_command(args) -> int:
     out.write_text(_json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"full report (answers, raw outputs, unsupported claims): {out}")
     conn.close()
+    return 0
+
+
+def calibrate_command(args) -> int:
+    """`kb calibrate`: replay candidate gate thresholds on evaluation reports and recommend one."""
+    import json as _json
+    import time
+    from pathlib import Path
+
+    from kb.core.db import connect
+    from kb.evaluation.calibration import (
+        DEFAULT_THRESHOLDS,
+        HIGH_SCORE,
+        feedback_ratings,
+        high_score_refusals,
+        in_scope,
+        latest_reports,
+        live_scores,
+        load_report,
+        recommend,
+        replay,
+        summarize_feedback,
+    )
+
+    sys.stdout.reconfigure(encoding="utf-8")
+    s = get_settings()
+    golden = {q["id"]: q for q in _json.loads(s.golden_path.read_text(encoding="utf-8"))}
+    reviewed_only = not args.all
+    try:
+        thresholds = sorted({float(t) for t in args.thresholds.split(",")}) if args.thresholds else list(DEFAULT_THRESHOLDS)
+    except ValueError:
+        print("--thresholds must be comma-separated numbers, e.g. 0.05,0.1,0.2")
+        return 1
+    eval_dir = s.db_path.parent / "eval"
+    reports = ([load_report(Path(p), golden) for p in args.report] if args.report
+               else latest_reports(eval_dir, golden, reviewed_only=reviewed_only))
+    if not reports:
+        scope = "every reviewed golden question" if reviewed_only else "every golden question"
+        print(f"no answer evaluation report in {eval_dir} covers {scope}; run `uv run kb eval-answers` first")
+        return 1
+
+    current = s.not_found_score
+    print(f"Gate calibration: KB_NOT_FOUND_SCORE is {current:.2f} now; the gate refuses without the LLM below it.")
+    saved = {"current": current, "scope": "reviewed" if reviewed_only else "all", "reports": []}
+    for report in reports:
+        outcomes = in_scope(report, reviewed_only)
+        answerable = sum(o.answerable for o in outcomes)
+        flags = ", ".join(f for f, on in (("comparison path", report.compare), ("refusal retry", report.refusal_retry))
+                          if on) or "settings not recorded"
+        print(f"\n{report.path.name}: answer model {report.model}, run at threshold {report.threshold:.2f} ({flags})")
+        print(f"{len(outcomes)} {'reviewed ' if reviewed_only else ''}questions: {answerable} answerable, "
+              f"{len(outcomes) - answerable} unanswerable\n")
+        rows = [replay(outcomes, t, report.threshold) for t in thresholds]
+        rec = recommend(outcomes, current)
+        print(f"{'threshold':>9}  {'answers lost (good)':>19}  {'wrong refusals':>14}  {'unanswerable refused':>20}  "
+              f"{'let through':>11}  {'LLM calls saved':>15}  {'retry rescues':>13}  unmeasured")
+        for r in rows:
+            mark = " now" if abs(r.threshold - current) < 1e-9 else ""
+            lost = f"{len(r.answers_lost)} ({len(r.good_lost)})"
+            refused = f"{r.unanswerable_gate + r.unanswerable_llm} (gate {r.unanswerable_gate})"
+            print(f"{r.threshold:>9.2f}  {lost:>19}  {r.wrong_refusals:>14}  {refused:>20}  {len(r.let_through):>11}  "
+                  f"{r.llm_calls_saved:>15}  {r.retry_rescues:>13}  {len(r.unmeasured) or ''}{mark}")
+            if args.details and (r.answers_lost or r.unmeasured):
+                lost_ids = ", ".join(r.answers_lost) or "-"
+                print(f"{'':>11}lost: {lost_ids}; unmeasured: {', '.join(r.unmeasured) or '-'}")
+
+        print()
+        if rec.lowest_answered:
+            o = rec.lowest_answered
+            print(f"Lowest-scoring answered question: {o.qid} ({o.qtype}) {o.top:.3f}"
+                  f"{' (answered on the retry)' if o.retried else ''}{'' if o.good else ', key facts missing'}")
+        if rec.highest_catchable:
+            print(f"Highest-scoring unanswerable question below it: {rec.highest_catchable.qid} {rec.highest_catchable.top:.3f}")
+        unanswerable_tops = sorted(o.top for o in outcomes if not o.answerable and o.top is not None)
+        if unanswerable_tops and rec.lowest_answered:
+            above = sum(t >= rec.lowest_answered.top for t in unanswerable_tops)
+            print(f"Unanswerable questions scoring at least as high as an answered one: {above} of "
+                  f"{len(unanswerable_tops)} (only the model's refusal can catch them)")
+        hard = high_score_refusals(outcomes)
+        if hard:
+            print(f"Refused by the model although retrieval scored >= {HIGH_SCORE}: "
+                  + ", ".join(f"{o.qid} {o.top:.3f}" for o in hard) + " (generation, not the gate: TD-23)")
+        if rec.threshold is None:
+            print(f"Recommendation: none ({rec.reason})")
+        else:
+            change = "keep it" if abs(rec.threshold - current) < 0.005 else f"change from {current:.2f}"
+            print(f"Recommendation: {rec.threshold:.2f} ({change}): {rec.reason}")
+        saved["reports"].append({
+            "report": report.path.name, "model": report.model, "run_threshold": report.threshold,
+            "questions": [o.qid for o in outcomes],
+            "rows": [r.__dict__ for r in rows],
+            "recommendation": rec.threshold, "reason": rec.reason,
+            "high_score_refusals": [o.qid for o in hard],
+        })
+
+    conn = connect()
+    try:
+        live, ratings = live_scores(conn), feedback_ratings(conn)
+    finally:
+        conn.close()
+    final = next((r["recommendation"] for r in saved["reports"] if r["recommendation"] is not None), current)
+    scored = [t for t in live if t is not None]
+    print(f"\nReal questions (chat and kb ask, not evaluation): {len(live)}; refused by the gate now "
+          f"{sum(t < current for t in scored)}, at {final:.2f}: {sum(t < final for t in scored)}")
+    fb = summarize_feedback(ratings, final)
+    reasons = ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in sorted(fb.by_reason.items()))
+    print(f"Feedback: {fb.ratings} rating(s), {fb.thumbs_down} thumbs down" + (f" ({reasons})" if reasons else ""))
+    near = [t for t in fb.gate_refused_should_answer if t >= final / 2]
+    far = [t for t in fb.gate_refused_should_answer if t < final / 2]
+    if near:
+        print(f"  'should have answered' but refused by the gate just below the threshold at score(s) "
+              f"{', '.join(f'{t:.3f}' for t in near)}: evidence for a lower threshold")
+    if far:
+        print(f"  'should have answered' but refused by the gate far below the threshold at score(s) "
+              f"{', '.join(f'{t:.3f}' for t in far)}: a lower threshold would not help; check the user's access "
+              f"and whether the document is ingested")
+    if fb.llm_refused_should_answer:
+        print(f"  'should have answered' but refused by the model: {fb.llm_refused_should_answer} (generation, TD-23)")
+    if fb.should_refuse_catchable:
+        print(f"  'should have refused' and answered below {final:.2f} (the gate would catch them): "
+              f"{', '.join(f'{t:.3f}' for t in fb.should_refuse_catchable)}")
+    if fb.should_refuse_above:
+        print(f"  'should have refused' and answered at or above {final:.2f} (only the model can refuse them): "
+              f"{len(fb.should_refuse_above)}")
+    saved.update(live_questions=len(live), feedback=fb.__dict__)
+    out = eval_dir / f"calibration-{time.strftime('%Y%m%d-%H%M%S')}.json"
+    out.write_text(_json.dumps(saved, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"\nreport: {out}\nSet the threshold with KB_NOT_FOUND_SCORE in .env, then measure: uv run kb eval-answers")
     return 0

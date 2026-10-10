@@ -221,7 +221,7 @@ uv run kb serve
 
 ### `kb eval`, `kb eval-answers` — evaluation
 
-Options, metrics and results are described in [evaluation.md](evaluation.md).
+Options, metrics and results are described in [evaluation.md](evaluation.md). `uv run kb calibrate` replays candidate "not found" thresholds on the latest answer evaluation and recommends one (also in evaluation.md).
 
 ### Typical workflows
 

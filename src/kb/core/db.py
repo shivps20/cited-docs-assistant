@@ -182,6 +182,11 @@ MIGRATIONS: list[str] = [
     ALTER TABLE documents ADD COLUMN metadata_hash TEXT;      -- manifest metadata last written to Qdrant
     ALTER TABLE documents ADD COLUMN embed_seconds REAL;      -- last full embedding run
     """,
+    # v6: why an answer got a thumbs down (Phase 7: input for re-calibrating the "not found" gate)
+    """
+    ALTER TABLE feedback ADD COLUMN reason TEXT
+        CHECK (reason IN ('wrong', 'incomplete', 'should_have_answered', 'should_have_refused'));
+    """,
 ]
 SCHEMA_VERSION = len(MIGRATIONS)
 

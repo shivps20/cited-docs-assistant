@@ -115,10 +115,10 @@ src/kb/
   retrieve/        search (filters, hybrid) · rerank · assemble · pipeline · gate · release
   llm/             catalogue (models.yaml) · providers (adapters: Ollama, OpenAI-compatible, Anthropic) · registry (roles, privacy, fallbacks) · prompts · condense · judge
   agent/           route (comparison?) · tools (search_kb, get_section, outline, read_section; access-checked) · compare (split, one search per side; read step per model)
-  answer/          pipeline: route -> retrieve -> gate -> LLM -> citations (-> retry on a refusal), in one trace
-  evaluation/      coverage · retrieval (kb eval) · answers (kb eval-answers)
+  answer/          pipeline: cache -> route -> retrieve -> gate -> LLM -> citations (-> retry on a refusal), in one trace · cache
+  evaluation/      coverage · retrieval (kb eval) · answers (kb eval-answers) · calibration (kb calibrate)
   api/             app (FastAPI) · chat (SSE turn) · services · health · users · sessions · static/ (chat UI)
-  cli/             main (entry point) · ingest · search · evaluation · serve
+  cli/             main (entry point) · ingest · search · evaluation · models · cache · serve
 tests/             mirrors src/kb (core, ingest, retrieve, agent, answer, evaluation, api)
 data/, models/     local runtime data (documents, parse cache, kb.db, reports) and models: git-ignored
 ```

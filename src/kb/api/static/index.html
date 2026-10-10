@@ -86,6 +86,9 @@ sup.cite { color: var(--accent); cursor: pointer; font-weight: 600; padding: 0 1
 .fbc { display: flex; gap: 6px; margin-top: 6px; }
 .fbc input { flex: 1; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; font-size: 13px; }
 .fbc button { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 2px 10px; font-size: 13px; }
+.fbc { flex-wrap: wrap; }
+.fbc .reasons { display: flex; gap: 4px; flex-wrap: wrap; width: 100%; }
+.fbc .reasons button.on { border-color: var(--accent); background: var(--accent-soft); }
 .composer { border-top: 1px solid var(--line); background: var(--panel); padding: 10px 24px 14px; }
 .composer .inner { display: flex; flex-direction: column; gap: 6px; }
 .row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); }
@@ -225,12 +228,21 @@ function contextHtml(units) {
     `<div class="unit"><div class="c">[${u.n}] ${esc(u.citation)} · score ${u.score} · ${u.tokens} tokens</div>${(u.same_text || []).length ? `<div class="m">same text: ${esc(u.same_text.join("; "))}</div>` : ""}<pre>${esc(u.text)}</pre></div>`).join("")}</details>`;
 }
 
-function feedbackHtml(traceId, rating, comment) {
+const REASONS = { wrong: "Wrong", incomplete: "Incomplete", should_have_answered: "Should have answered",
+                  should_have_refused: "Should have refused" };
+
+function savedText(rating, reason, comment) {
+  if (!rating) return "";
+  const parts = [reason ? REASONS[reason] : "", comment || ""].filter(Boolean);
+  return "feedback saved" + (parts.length ? ": " + parts.join(" — ") : "");
+}
+
+function feedbackHtml(traceId, rating, comment, reason) {
   if (!traceId) return "";
   return `<span class="fb" data-trace="${esc(traceId)}">
       <button type="button" class="${rating === 1 ? "on" : ""}" data-rate="1" title="Helpful">👍</button>
       <button type="button" class="${rating === -1 ? "on" : ""}" data-rate="-1" title="Not helpful">👎</button></span>
-    <span class="fbsaved">${rating ? "feedback saved" + (comment ? ": " + esc(comment) : "") : ""}</span>`;
+    <span class="fbsaved">${esc(savedText(rating, reason, comment))}</span>`;
 }
 
 function finishCard(card, f, contextUnits) {
@@ -358,7 +370,7 @@ async function openSession(id) {
       div.className = "msg";
       const nf = m.gate_decision && m.gate_decision !== "pass" || /^I could not find the answer/.test(m.content);
       div.innerHTML = `<div class="card ${nf ? "notfound" : ""}"><div class="answer">${renderMarkdown(m.content)}</div>${sourcesHtml(m.sources)}
-        <div class="foot">${feedbackHtml(m.trace_id, m.rating, m.comment)}<span>trace ${esc((m.trace_id || "").slice(0, 8))}</span></div></div>`;
+        <div class="foot">${feedbackHtml(m.trace_id, m.rating, m.comment, m.reason)}<span>trace ${esc((m.trace_id || "").slice(0, 8))}</span></div></div>`;
       $("thread").appendChild(div);
     }
     if (!s.messages.length) showEmpty();
@@ -374,21 +386,26 @@ async function rate(button) {
     box.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b === button));
     const foot = box.closest(".foot");
     foot.querySelector(".fbsaved").textContent = "feedback saved";
-    if (!foot.parentElement.querySelector(".fbc")) {
-      const c = document.createElement("div");
-      c.className = "fbc";
-      c.innerHTML = `<input type="text" maxlength="1000" placeholder="Optional: what was good or wrong?"><button type="button">Save comment</button>`;
-      c.querySelector("button").onclick = async () => {
-        const comment = c.querySelector("input").value.trim();
-        const current = +box.querySelector("button.on").dataset.rate;
-        try {
-          await api("/api/feedback", { method: "POST", body: JSON.stringify({ trace_id: trace, rating: current, comment: comment || null }) });
-          foot.querySelector(".fbsaved").textContent = "feedback saved" + (comment ? ": " + comment : "");
-          c.remove();
-        } catch (err) { alert(err.message); }
-      };
-      foot.after(c);
-    }
+    const old = foot.parentElement.querySelector(".fbc");
+    if (old) old.remove();              // the panel differs between 👍 and 👎
+    const c = document.createElement("div");
+    c.className = "fbc";
+    const reasons = rating === -1 ? `<div class="reasons">${Object.entries(REASONS).map(([key, label]) =>
+      `<button type="button" data-reason="${key}">${label}</button>`).join("")}</div>` : "";
+    c.innerHTML = `${reasons}<input type="text" maxlength="1000" placeholder="Optional: what was good or wrong?"><button type="button" class="save">Save</button>`;
+    c.querySelectorAll("[data-reason]").forEach((r) => r.onclick = () =>
+      c.querySelectorAll("[data-reason]").forEach((x) => x.classList.toggle("on", x === r && !x.classList.contains("on"))));
+    c.querySelector(".save").onclick = async () => {
+      const comment = c.querySelector("input").value.trim();
+      const chosen = c.querySelector("[data-reason].on");
+      const reason = chosen ? chosen.dataset.reason : null;
+      try {
+        await api("/api/feedback", { method: "POST", body: JSON.stringify({ trace_id: trace, rating, reason, comment: comment || null }) });
+        foot.querySelector(".fbsaved").textContent = savedText(rating, reason, comment);
+        c.remove();
+      } catch (err) { alert(err.message); }
+    };
+    foot.after(c);
   } catch (err) { alert(err.message); }
 }
 

@@ -12,7 +12,7 @@ looked up in users.yaml; unknown users get 403.
     GET  /api/sessions/{session_id}   one conversation with its messages (404 if not the user's)
     PUT  /api/sessions/{id}/release   set or clear the conversation's release filter
     POST /api/chat                    ask a question; server-sent events (see kb.api.chat)
-    POST /api/feedback                rate an answer (+1 / -1) with an optional comment
+    POST /api/feedback                rate an answer (+1 / -1; a reason with -1) with an optional comment
     GET  /                            the chat UI (kb/api/static/index.html)
 """
 
@@ -24,7 +24,7 @@ from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from kb.answer.cache import AnswerCache
 from kb.api import sessions
@@ -61,11 +61,20 @@ class ChatRequest(BaseModel):
 
 
 class FeedbackRequest(BaseModel):
-    """Body of POST /api/feedback: a thumbs up (1) or down (-1) for one answer, optionally with a comment."""
+    """Body of POST /api/feedback: a thumbs up (1) or down (-1) for one answer, optionally with a comment;
+    a thumbs down can say why (reason)."""
 
     trace_id: str = Field(min_length=1)
     rating: Literal[1, -1]
+    reason: Literal["wrong", "incomplete", "should_have_answered", "should_have_refused"] | None = None
     comment: str | None = Field(default=None, max_length=MAX_COMMENT_CHARS)
+
+    @model_validator(mode="after")
+    def _reason_only_with_thumbs_down(self) -> "FeedbackRequest":
+        """A reason explains a thumbs down; it makes no sense with a thumbs up."""
+        if self.reason is not None and self.rating != -1:
+            raise ValueError("a reason can only be given with rating -1")
+        return self
 
 
 class ReleaseRequest(BaseModel):
@@ -201,7 +210,7 @@ def create_app(services: Services | None = None) -> FastAPI:
     def feedback(body: FeedbackRequest, user: CurrentUser, conn: Db) -> dict:
         """Rate one of the current user's answers; rating again replaces the earlier rating."""
         comment = body.comment.strip() if body.comment and body.comment.strip() else None
-        saved = sessions.save_feedback(conn, body.trace_id, user.user_id, body.rating, comment)
+        saved = sessions.save_feedback(conn, body.trace_id, user.user_id, body.rating, comment, body.reason)
         if saved is None:
             raise HTTPException(status_code=404, detail="answer not found")
         if body.rating < 0:     # a bad answer is not served from the cache again
