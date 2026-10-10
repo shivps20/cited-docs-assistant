@@ -32,11 +32,15 @@ Search retrieves 30 candidates (dense + sparse, fused), reranks the first `KB_RE
 
 ### Tuning flags
 
-| Flag | Default | Meaning |
-|---|---|---|
-| `--rerank-top N` | `KB_RERANK_TOP` (20) | Rerank only the first N candidates; the rest keep search order. `0` reranks all. |
-| `--max-length N` | 512 | Reranker input length in tokens; longer chunks are truncated. |
-| `--min-score X` | off | Drop context chunks whose rerank score is below X (0–1). Unreranked chunks are dropped too. |
+<table style="width:100%">
+<colgroup><col style="width:24%"><col style="width:16%"><col style="width:60%"></colgroup>
+<thead><tr><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>--rerank-top N</code></td><td><code>KB_RERANK_TOP</code> (20)</td><td>Rerank only the first N candidates; the rest keep search order. <code>0</code> reranks all.</td></tr>
+<tr><td><code>--max-length N</code></td><td>512</td><td>Reranker input length in tokens; longer chunks are truncated.</td></tr>
+<tr><td><code>--min-score X</code></td><td>off</td><td>Drop context chunks whose rerank score is below X (0–1). Unreranked chunks are dropped too.</td></tr>
+</tbody>
+</table>
 
 Change the default depth in `.env` with `KB_RERANK_TOP=<N>`.
 

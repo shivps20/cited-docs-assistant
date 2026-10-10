@@ -25,14 +25,18 @@ Every query is traced stage by stage into SQLite, and a golden question set (`ev
 
 ## Requirements
 
-| Component | Version used | Notes |
-|---|---|---|
-| Windows 11 / Linux | | Developed on Windows 11 |
-| NVIDIA GPU + driver | RTX A1000 6 GB, driver 596 (CUDA 13.2) | GPU used for ingestion; queries run on CPU + Ollama |
-| [Docker Desktop](https://www.docker.com/products/docker-desktop/) | 4.93 | Runs Qdrant |
-| [uv](https://docs.astral.sh/uv/) | 0.11 | Python and dependency management |
-| [Ollama](https://ollama.com/) | 0.30 | Local LLM `qwen2.5:7b-instruct` |
-| Disk | ~10 GB | Models (~6 GB) + CUDA torch |
+<table style="width:100%">
+<colgroup><col style="width:23%"><col style="width:21%"><col style="width:56%"></colgroup>
+<thead><tr><th>Component</th><th>Version used</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>Windows 11 / Linux</td><td></td><td>Developed on Windows 11</td></tr>
+<tr><td>NVIDIA GPU + driver</td><td>RTX A1000 6 GB, driver 596 (CUDA 13.2)</td><td>GPU used for ingestion; queries run on CPU + Ollama</td></tr>
+<tr><td><a href="https://www.docker.com/products/docker-desktop/">Docker Desktop</a></td><td>4.93</td><td>Runs Qdrant</td></tr>
+<tr><td><a href="https://docs.astral.sh/uv/">uv</a></td><td>0.11</td><td>Python and dependency management</td></tr>
+<tr><td><a href="https://ollama.com/">Ollama</a></td><td>0.30</td><td>Local LLM <code>qwen2.5:7b-instruct</code></td></tr>
+<tr><td>Disk</td><td>~10 GB</td><td>Models (~6 GB) + CUDA torch</td></tr>
+</tbody>
+</table>
 
 ## Setup
 
@@ -93,13 +97,17 @@ The 6 GB GPU can't hold the embedding model and the LLM at once: run ingestion w
 
 ## Documentation
 
-| Document | Contents |
-|---|---|
-| [docs/architecture.md](docs/architecture.md) | Ingestion, retrieval and answering pipelines; design decisions |
-| [docs/commands.md](docs/commands.md) | Every `kb` command with options and examples, typical workflows |
-| [docs/configuration.md](docs/configuration.md) | `.env` settings, `config/` files, organisation-specific rules, the document manifest |
-| [docs/api.md](docs/api.md) | `kb serve`, HTTP endpoints, chat events, the web UI |
-| [docs/evaluation.md](docs/evaluation.md) | Golden set, `kb eval`, `kb eval-answers`, `kb calibrate`, results |
+<table style="width:100%">
+<colgroup><col style="width:40%"><col style="width:60%"></colgroup>
+<thead><tr><th>Document</th><th>Contents</th></tr></thead>
+<tbody>
+<tr><td><a href="docs/architecture.md">docs/architecture.md</a></td><td>Ingestion, retrieval and answering pipelines; design decisions</td></tr>
+<tr><td><a href="docs/commands.md">docs/commands.md</a></td><td>Every <code>kb</code> command with options and examples, typical workflows</td></tr>
+<tr><td><a href="docs/configuration.md">docs/configuration.md</a></td><td><code>.env</code> settings, <code>config/</code> files, organisation-specific rules, the document manifest</td></tr>
+<tr><td><a href="docs/api.md">docs/api.md</a></td><td><code>kb serve</code>, HTTP endpoints, chat events, the web UI</td></tr>
+<tr><td><a href="docs/evaluation.md">docs/evaluation.md</a></td><td>Golden set, <code>kb eval</code>, <code>kb eval-answers</code>, <code>kb calibrate</code>, results</td></tr>
+</tbody>
+</table>
 
 ## Project layout
 

@@ -4,26 +4,34 @@
 
 ## `kb serve`
 
-| Option | Default | Meaning |
-|---|---|---|
-| `--host` | `KB_API_HOST` (127.0.0.1) | Interface to listen on. Keep the loopback address: users are not authenticated |
-| `--port` | `KB_API_PORT` (8000) | Port |
+<table style="width:100%">
+<colgroup><col style="width:12%"><col style="width:29%"><col style="width:59%"></colgroup>
+<thead><tr><th>Option</th><th>Default</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>--host</code></td><td><code>KB_API_HOST</code> (127.0.0.1)</td><td>Interface to listen on. Keep the loopback address: users are not authenticated</td></tr>
+<tr><td><code>--port</code></td><td><code>KB_API_PORT</code> (8000)</td><td>Port</td></tr>
+</tbody>
+</table>
 
 Loads bge-m3, the reranker and the LLM providers **once** at startup (~20 s), so each request costs only retrieval and generation. **Chat UI: <http://127.0.0.1:8000>**; interactive API docs: <http://127.0.0.1:8000/docs>.
 
-| Endpoint | What it does |
-|---|---|
-| `GET /api/health` | Status of SQLite, Qdrant (point count), Ollama (model pulled) and the loaded models; `status` is `ok` or `degraded` |
-| `GET /api/users` | Users from `config/users.yaml`, for the UI's user picker |
-| `GET /api/models` | Models from `config/models.yaml` for the UI's model menu: `default` (the answer role), `fallback`, and per model `name`, `model`, `adapter`, `location` (local / external) and `ready` (key set) |
-| `GET /api/me` | The current user and the groups their searches are filtered by |
-| `POST /api/sessions` | Start a conversation |
-| `GET /api/sessions` | The current user's conversations, most recent first, titled by their first question |
-| `GET /api/sessions/{id}` | One conversation with its messages (404 if it is another user's) |
-| `PUT /api/sessions/{id}/release` | Set (`{"release": "R2025x"}`) or clear (`{"release": null}`) the conversation's release filter |
-| `POST /api/feedback` | Rate one of your answers: `{"trace_id": "…", "rating": 1 \| -1, "reason": "…" (optional, only with -1: `wrong`, `incomplete`, `should_have_answered`, `should_have_refused`), "comment": "…" (optional)}`; a reason with a 👍 or an unknown reason is a 422, and a 👍 clears an earlier reason; rating again replaces the earlier rating (404 for another user's answer). A 👎 also removes the answer from the answer cache (whether it was the stored answer or a cached copy), so the next ask is answered afresh |
-| `GET /` | The chat UI |
-| `POST /api/chat` | Ask a question: body `{"question": "…", "session_id": "…" (optional: a new conversation without it), "model": "claude-opus" (optional: a name from `config/models.yaml`; without it the answer role's model; `provider` is accepted as the older name), "cache": false (optional: answer afresh instead of from the answer cache)}`. An unknown model is a 400 listing the configured ones. Answers as a stream of server-sent events (below); `final` names the model that answered (`model_profile`) and says whether the answer came from the cache (`cached`) |
+<table style="width:100%">
+<colgroup><col style="width:20%"><col style="width:80%"></colgroup>
+<thead><tr><th>Endpoint</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><code>GET /api/health</code></td><td>Status of SQLite, Qdrant (point count), Ollama (model pulled) and the loaded models; <code>status</code> is <code>ok</code> or <code>degraded</code></td></tr>
+<tr><td><code>GET /api/users</code></td><td>Users from <code>config/users.yaml</code>, for the UI's user picker</td></tr>
+<tr><td><code>GET /api/models</code></td><td>Models from <code>config/models.yaml</code> for the UI's model menu: <code>default</code> (the answer role), <code>fallback</code>, and per model <code>name</code>, <code>model</code>, <code>adapter</code>, <code>location</code> (local / external) and <code>ready</code> (key set)</td></tr>
+<tr><td><code>GET /api/me</code></td><td>The current user and the groups their searches are filtered by</td></tr>
+<tr><td><code>POST /api/sessions</code></td><td>Start a conversation</td></tr>
+<tr><td><code>GET /api/sessions</code></td><td>The current user's conversations, most recent first, titled by their first question</td></tr>
+<tr><td><code>GET /api/sessions/{id}</code></td><td>One conversation with its messages (404 if it is another user's)</td></tr>
+<tr><td><code>PUT /api/sessions/{id}/release</code></td><td>Set (<code>{&quot;release&quot;: &quot;R2025x&quot;}</code>) or clear (<code>{&quot;release&quot;: null}</code>) the conversation's release filter</td></tr>
+<tr><td><code>POST /api/feedback</code></td><td>Rate one of your answers: <code>{&quot;trace_id&quot;: &quot;…&quot;, &quot;rating&quot;: 1 | -1, &quot;reason&quot;: &quot;…&quot; (optional, only with -1: </code>wrong<code>, </code>incomplete<code>, </code>should_have_answered<code>, </code>should_have_refused<code>), &quot;comment&quot;: &quot;…&quot; (optional)}</code>; a reason with a 👍 or an unknown reason is a 422, and a 👍 clears an earlier reason; rating again replaces the earlier rating (404 for another user's answer). A 👎 also removes the answer from the answer cache (whether it was the stored answer or a cached copy), so the next ask is answered afresh</td></tr>
+<tr><td><code>GET /</code></td><td>The chat UI</td></tr>
+<tr><td><code>POST /api/chat</code></td><td>Ask a question: body <code>{&quot;question&quot;: &quot;…&quot;, &quot;session_id&quot;: &quot;…&quot; (optional: a new conversation without it), &quot;model&quot;: &quot;claude-opus&quot; (optional: a name from </code>config/models.yaml<code>; without it the answer role's model; </code>provider<code> is accepted as the older name), &quot;cache&quot;: false (optional: answer afresh instead of from the answer cache)}</code>. An unknown model is a 400 listing the configured ones. Answers as a stream of server-sent events (below); <code>final</code> names the model that answered (<code>model_profile</code>) and says whether the answer came from the cache (<code>cached</code>)</td></tr>
+</tbody>
+</table>
 
 The user is named by the `X-KB-User` header (the default user from `config/users.yaml` when absent); unknown users get 403. Access groups always come from `config/users.yaml` (example: [config/users.example.yaml](../config/users.example.yaml)), never from the request, so a client cannot claim more access than configured.
 

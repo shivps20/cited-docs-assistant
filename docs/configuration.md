@@ -6,41 +6,49 @@ Settings (`.env`), the organisation-specific files in `config/`, and the documen
 
 All settings come from `.env` (see [.env.example](../.env.example)) through `kb.core.config.Settings`.
 
-| Variable | Default | |
-|---|---|---|
-| `QDRANT_URL`, `QDRANT_COLLECTION` | `http://127.0.0.1:6444`, `kb_chunks` | Vector store |
-| `KB_DB_PATH` | `data/kb.db` | SQLite database |
-| `KB_DOCS_DIR`, `KB_MANIFEST_PATH` | `data/documents`, `config/manifest.csv` | The documents folder (subfolders included; manifest paths are relative to it) and the manifest. Documents elsewhere are added with `kb manifest scan --folder PATH` and read in place (absolute paths in the manifest) |
-| `KB_DOC_TYPES` | `pdf,pptx,ppt,docx,doc` | File types picked up by `kb manifest scan` and accepted in the manifest. `.ppt` / `.doc` (old binary formats) are converted once to `.pptx` / `.docx` with LibreOffice before parsing, cached in `data/parsed/converted/` |
-| `KB_SOFFICE` | *(found automatically)* | Path to LibreOffice's `soffice` when it is not on the PATH or in `C:/Program Files/LibreOffice` |
-| `KB_SOURCE_PATH` | `full` | How every source shows its file (in `kb ask`, `kb search`, the chat's Sources and context panel, evaluation reports): `full` = the absolute path; `relative` = the path relative to `KB_DOCS_DIR`, or only the file name for a document kept elsewhere (for a server: no disk layout shown). Display only: stored answers, traces and the answer cache keep the manifest form, so switching it changes nothing else |
-| `EMBED_MODEL_PATH`, `RERANK_MODEL_PATH`, `DOCLING_ARTIFACTS_PATH` | `models/...` | Local models |
-| `HF_HUB_OFFLINE` | `1` | Never download models at runtime |
-| `KB_RERANK_TOP` | `20` | Candidates reranked per search (see [architecture.md](architecture.md#retrieval)) |
-| `KB_NOT_FOUND_SCORE` | `0.1` | Reply "not found" without the LLM below this top rerank score (see [architecture.md](architecture.md#answering)); check a value with `kb calibrate` ([evaluation.md](evaluation.md#kb-calibrate--the-not-found-threshold)) |
-| `KB_REFUSAL_RETRY` | `true` | When the model replies "not found", ask once more with only the best-matching sources (3, or 2 per side of a comparison) |
-| `KB_ANSWER_CACHE` | `true` | Answer a repeated question from the answer cache (same question, groups, release, corpus, model and prompt; see [architecture.md](architecture.md#answer-cache)) |
-| `KB_LLM_PROVIDER` | `auto` | `auto` (the catalogue's answer role), `ollama` (the local fallback) or `openai`; superseded by `config/models.yaml` roles |
-| `KB_USERS_PATH` | `config/users.yaml` | Chat API users and their access groups |
-| `KB_API_HOST`, `KB_API_PORT` | `127.0.0.1`, `8000` | Where `kb serve` listens (keep loopback: no authentication) |
-| `KB_DOMAIN_PATH` | `config/domain.yaml` | Organisation-specific text rules (see below) |
-| `KB_GOLDEN_PATH` | `eval/golden.json` | Golden question set used by `kb coverage`, `kb eval`, `kb eval-answers`, `kb calibrate` and `eval/check_golden.py` |
-| `KB_MODELS_PATH` | `config/models.yaml` | Model catalogue: which language models exist and which job each one does (below). Without the file: `LLM_MODEL`, plus OpenAI when `OPENAI_*` is set |
-| `LLM_TEMPERATURE`, `LLM_MAX_TOKENS` | `0`, `1500` | Ollama sampling temperature; answer length cap (both providers) |
-| `OLLAMA_HOST`, `LLM_MODEL`, `LLM_NUM_CTX` | `127.0.0.1:11434`, `qwen2.5:7b-instruct`, `8192` | Local LLM |
-| `OPENAI_API_KEY`, `OPENAI_MODEL` | *(empty)* | Optional external LLM when there is no `config/models.yaml` (with a catalogue, OpenAI is a catalogue entry) |
+<table style="width:100%">
+<colgroup><col style="width:15%"><col style="width:16%"><col style="width:69%"></colgroup>
+<thead><tr><th>Variable</th><th>Default</th><th></th></tr></thead>
+<tbody>
+<tr><td><code>QDRANT_URL</code>, <code>QDRANT_COLLECTION</code></td><td><code>http://127.0.0.1:6444</code>, <code>kb_chunks</code></td><td>Vector store</td></tr>
+<tr><td><code>KB_DB_PATH</code></td><td><code>data/kb.db</code></td><td>SQLite database</td></tr>
+<tr><td><code>KB_DOCS_DIR</code>, <code>KB_MANIFEST_PATH</code></td><td><code>data/documents</code>, <code>config/manifest.csv</code></td><td>The documents folder (subfolders included; manifest paths are relative to it) and the manifest. Documents elsewhere are added with <code>kb manifest scan --folder PATH</code> and read in place (absolute paths in the manifest)</td></tr>
+<tr><td><code>KB_DOC_TYPES</code></td><td><code>pdf,pptx,ppt,docx,doc</code></td><td>File types picked up by <code>kb manifest scan</code> and accepted in the manifest. <code>.ppt</code> / <code>.doc</code> (old binary formats) are converted once to <code>.pptx</code> / <code>.docx</code> with LibreOffice before parsing, cached in <code>data/parsed/converted/</code></td></tr>
+<tr><td><code>KB_SOFFICE</code></td><td><em>(found automatically)</em></td><td>Path to LibreOffice's <code>soffice</code> when it is not on the PATH or in <code>C:/Program Files/LibreOffice</code></td></tr>
+<tr><td><code>KB_SOURCE_PATH</code></td><td><code>full</code></td><td>How every source shows its file (in <code>kb ask</code>, <code>kb search</code>, the chat's Sources and context panel, evaluation reports): <code>full</code> = the absolute path; <code>relative</code> = the path relative to <code>KB_DOCS_DIR</code>, or only the file name for a document kept elsewhere (for a server: no disk layout shown). Display only: stored answers, traces and the answer cache keep the manifest form, so switching it changes nothing else</td></tr>
+<tr><td><code>EMBED_MODEL_PATH</code>, <code>RERANK_MODEL_PATH</code>, <code>DOCLING_ARTIFACTS_PATH</code></td><td><code>models/...</code></td><td>Local models</td></tr>
+<tr><td><code>HF_HUB_OFFLINE</code></td><td><code>1</code></td><td>Never download models at runtime</td></tr>
+<tr><td><code>KB_RERANK_TOP</code></td><td><code>20</code></td><td>Candidates reranked per search (see <a href="architecture.md#retrieval">architecture.md</a>)</td></tr>
+<tr><td><code>KB_NOT_FOUND_SCORE</code></td><td><code>0.1</code></td><td>Reply &quot;not found&quot; without the LLM below this top rerank score (see <a href="architecture.md#answering">architecture.md</a>); check a value with <code>kb calibrate</code> (<a href="evaluation.md#kb-calibrate--the-not-found-threshold">evaluation.md</a>)</td></tr>
+<tr><td><code>KB_REFUSAL_RETRY</code></td><td><code>true</code></td><td>When the model replies &quot;not found&quot;, ask once more with only the best-matching sources (3, or 2 per side of a comparison)</td></tr>
+<tr><td><code>KB_ANSWER_CACHE</code></td><td><code>true</code></td><td>Answer a repeated question from the answer cache (same question, groups, release, corpus, model and prompt; see <a href="architecture.md#answer-cache">architecture.md</a>)</td></tr>
+<tr><td><code>KB_LLM_PROVIDER</code></td><td><code>auto</code></td><td><code>auto</code> (the catalogue's answer role), <code>ollama</code> (the local fallback) or <code>openai</code>; superseded by <code>config/models.yaml</code> roles</td></tr>
+<tr><td><code>KB_USERS_PATH</code></td><td><code>config/users.yaml</code></td><td>Chat API users and their access groups</td></tr>
+<tr><td><code>KB_API_HOST</code>, <code>KB_API_PORT</code></td><td><code>127.0.0.1</code>, <code>8000</code></td><td>Where <code>kb serve</code> listens (keep loopback: no authentication)</td></tr>
+<tr><td><code>KB_DOMAIN_PATH</code></td><td><code>config/domain.yaml</code></td><td>Organisation-specific text rules (see below)</td></tr>
+<tr><td><code>KB_GOLDEN_PATH</code></td><td><code>eval/golden.json</code></td><td>Golden question set used by <code>kb coverage</code>, <code>kb eval</code>, <code>kb eval-answers</code>, <code>kb calibrate</code> and <code>eval/check_golden.py</code></td></tr>
+<tr><td><code>KB_MODELS_PATH</code></td><td><code>config/models.yaml</code></td><td>Model catalogue: which language models exist and which job each one does (below). Without the file: <code>LLM_MODEL</code>, plus OpenAI when <code>OPENAI_*</code> is set</td></tr>
+<tr><td><code>LLM_TEMPERATURE</code>, <code>LLM_MAX_TOKENS</code></td><td><code>0</code>, <code>1500</code></td><td>Ollama sampling temperature; answer length cap (both providers)</td></tr>
+<tr><td><code>OLLAMA_HOST</code>, <code>LLM_MODEL</code>, <code>LLM_NUM_CTX</code></td><td><code>127.0.0.1:11434</code>, <code>qwen2.5:7b-instruct</code>, <code>8192</code></td><td>Local LLM</td></tr>
+<tr><td><code>OPENAI_API_KEY</code>, <code>OPENAI_MODEL</code></td><td><em>(empty)</em></td><td>Optional external LLM when there is no <code>config/models.yaml</code> (with a catalogue, OpenAI is a catalogue entry)</td></tr>
+</tbody>
+</table>
 
 ## Organisation-specific data (kept local)
 
 Nothing that comes from the ingested documents, and no rule that names their publisher, is committed. These files live only on your machine (git-ignored); the repository has fictional `*.example.*` versions to copy:
 
-| Local file | Example in the repository | Holds |
-|---|---|---|
-| `config/manifest.csv` | [config/manifest.example.csv](../config/manifest.example.csv) | Which documents are ingested, their titles, releases, access groups |
-| `config/users.yaml` | [config/users.example.yaml](../config/users.example.yaml) | Chat API users and their access groups |
-| `config/domain.yaml` | [config/domain.example.yaml](../config/domain.example.yaml) | Text rules specific to whose documents you ingest (below) |
-| `config/models.yaml` | [config/models.example.yaml](../config/models.example.yaml) | Language models (local, OpenAI, Mistral, Gemini, Claude) and the job of each (below) |
-| `eval/golden.json` | [eval/golden.example.json](../eval/golden.example.json) | Golden questions with expected answers taken from the documents |
+<table style="width:100%">
+<colgroup><col style="width:17%"><col style="width:27%"><col style="width:56%"></colgroup>
+<thead><tr><th>Local file</th><th>Example in the repository</th><th>Holds</th></tr></thead>
+<tbody>
+<tr><td><code>config/manifest.csv</code></td><td><a href="../config/manifest.example.csv">config/manifest.example.csv</a></td><td>Which documents are ingested, their titles, releases, access groups</td></tr>
+<tr><td><code>config/users.yaml</code></td><td><a href="../config/users.example.yaml">config/users.example.yaml</a></td><td>Chat API users and their access groups</td></tr>
+<tr><td><code>config/domain.yaml</code></td><td><a href="../config/domain.example.yaml">config/domain.example.yaml</a></td><td>Text rules specific to whose documents you ingest (below)</td></tr>
+<tr><td><code>config/models.yaml</code></td><td><a href="../config/models.example.yaml">config/models.example.yaml</a></td><td>Language models (local, OpenAI, Mistral, Gemini, Claude) and the job of each (below)</td></tr>
+<tr><td><code>eval/golden.json</code></td><td><a href="../eval/golden.example.json">eval/golden.example.json</a></td><td>Golden questions with expected answers taken from the documents</td></tr>
+</tbody>
+</table>
 
 `config/domain.yaml` (loaded by `kb.core.domain`; every key optional, a key you set replaces the generic default):
 
@@ -65,18 +73,22 @@ Changing `boilerplate_patterns` or `command_patterns` changes sections and chunk
 
 `config/manifest.csv` (example: [config/manifest.example.csv](../config/manifest.example.csv)) holds, for every source file, the metadata that can't be read reliably from the file itself. It is copied into every chunk and drives retrieval filters.
 
-| Column | Example | Purpose |
-|---|---|---|
-| `doc_id` | `install-guide` | Stable ID used in citations and re-ingestion |
-| `path` | `Install/Acme_Platform_Installation_Guide.pdf` | File, relative to `KB_DOCS_DIR` (may include subfolders), or an absolute path such as `E:/Docs/New/Guide.pptx` for a document kept outside it |
-| `title` | Acme Platform Installation Guide | Shown in answer citations |
-| `family`, `version` | `install-guide`, `2.0` | The highest version per family is the latest revision |
-| `release_min`, `release_max` | `R2024x`, *(blank)* | Release range the document applies to; blank = open-ended |
-| `allowed_groups` | `all` or `internal` | `;`-separated access groups |
-| `external_ok` | `true` | May its text be sent to an external LLM (OpenAI, Mistral, Gemini, Claude) |
-| `category` | `installation` | One of: installation, administration, authentication, infrastructure, upgrade, performance, applications, functional, troubleshooting (defined in `kb.manifest.CATEGORIES`) |
-| `added` | `2026-10-10` | Date the row was added (`YYYY-MM-DD`, blank allowed); filled by `kb manifest scan` and, for older rows, `kb manifest backfill` |
-| `review` | `category guessed from the name` | What still needs a human check; blank = reviewed. `kb manifest validate` counts and lists these rows |
+<table style="width:100%">
+<colgroup><col style="width:10%"><col style="width:25%"><col style="width:65%"></colgroup>
+<thead><tr><th>Column</th><th>Example</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>doc_id</code></td><td><code>install-guide</code></td><td>Stable ID used in citations and re-ingestion</td></tr>
+<tr><td><code>path</code></td><td><code>Install/Acme_Platform_Installation_Guide.pdf</code></td><td>File, relative to <code>KB_DOCS_DIR</code> (may include subfolders), or an absolute path such as <code>E:/Docs/New/Guide.pptx</code> for a document kept outside it</td></tr>
+<tr><td><code>title</code></td><td>Acme Platform Installation Guide</td><td>Shown in answer citations</td></tr>
+<tr><td><code>family</code>, <code>version</code></td><td><code>install-guide</code>, <code>2.0</code></td><td>The highest version per family is the latest revision</td></tr>
+<tr><td><code>release_min</code>, <code>release_max</code></td><td><code>R2024x</code>, <em>(blank)</em></td><td>Release range the document applies to; blank = open-ended</td></tr>
+<tr><td><code>allowed_groups</code></td><td><code>all</code> or <code>internal</code></td><td><code>;</code>-separated access groups</td></tr>
+<tr><td><code>external_ok</code></td><td><code>true</code></td><td>May its text be sent to an external LLM (OpenAI, Mistral, Gemini, Claude)</td></tr>
+<tr><td><code>category</code></td><td><code>installation</code></td><td>One of: installation, administration, authentication, infrastructure, upgrade, performance, applications, functional, troubleshooting (defined in <code>kb.manifest.CATEGORIES</code>)</td></tr>
+<tr><td><code>added</code></td><td><code>2026-10-10</code></td><td>Date the row was added (<code>YYYY-MM-DD</code>, blank allowed); filled by <code>kb manifest scan</code> and, for older rows, <code>kb manifest backfill</code></td></tr>
+<tr><td><code>review</code></td><td><code>category guessed from the name</code></td><td>What still needs a human check; blank = reviewed. <code>kb manifest validate</code> counts and lists these rows</td></tr>
+</tbody>
+</table>
 
 How `kb manifest scan` drafts a row (every guess is written into `review`):
 

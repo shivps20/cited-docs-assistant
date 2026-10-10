@@ -4,11 +4,15 @@ How retrieval and answers are measured against the golden question set (`eval/go
 
 ## `kb eval` — retrieval evaluation
 
-| Option | Meaning |
-|---|---|
-| `--configs LIST` | Comma-separated subset of `dense`, `sparse`, `hybrid`, `hybrid+rr10`, `hybrid+rr15@256`, `hybrid+rr30` (default: all; the reranked ones take minutes) |
-| `--questions LIST` | Only these golden IDs, e.g. `q001,q012` |
-| `--misses` | List questions without a hit in the top 5 |
+<table style="width:100%">
+<colgroup><col style="width:40%"><col style="width:60%"></colgroup>
+<thead><tr><th>Option</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>--configs LIST</code></td><td>Comma-separated subset of <code>dense</code>, <code>sparse</code>, <code>hybrid</code>, <code>hybrid+rr10</code>, <code>hybrid+rr15@256</code>, <code>hybrid+rr30</code> (default: all; the reranked ones take minutes)</td></tr>
+<tr><td><code>--questions LIST</code></td><td>Only these golden IDs, e.g. <code>q001,q012</code></td></tr>
+<tr><td><code>--misses</code></td><td>List questions without a hit in the top 5</td></tr>
+</tbody>
+</table>
 
 Prints Recall@1/5/10, MRR, context recall, all-docs@5 for comparisons, latency, scores for answerable vs unanswerable questions, and the access and release filter checks. The full report goes to `data/eval/retrieval-<timestamp>.json`.
 
@@ -23,14 +27,18 @@ uv run kb eval                                        # all six configurations (
 
 `uv run kb eval` runs the golden questions (`eval/golden.json`) through each configuration and saves the report to `data/eval/`. Results on the 13-document sample corpus (40 answerable, 5 unanswerable questions; reranker on CPU):
 
-| Configuration | Recall@1 | Recall@5 | MRR | Context recall | Median latency |
-|---|---|---|---|---|---|
-| dense | 0.90 | 1.00 | 0.95 | 1.00 | 0.13 s |
-| sparse | 0.75 | 0.97 | 0.84 | 0.95 | 0.12 s |
-| hybrid | 0.82 | 1.00 | 0.90 | 0.97 | 0.12 s |
-| hybrid + rerank top 10 | 0.95 | 1.00 | 0.97 | 1.00 | 7.5 s |
-| hybrid + rerank top 15, 256 tokens | 0.95 | 1.00 | 0.97 | 1.00 | 9.4 s |
-| hybrid + rerank top 30 | 0.95 | 1.00 | 0.97 | 1.00 | 20.7 s |
+<table style="width:100%">
+<colgroup><col style="width:39%"><col style="width:11%"><col style="width:11%"><col style="width:9%"><col style="width:13%"><col style="width:17%"></colgroup>
+<thead><tr><th>Configuration</th><th>Recall@1</th><th>Recall@5</th><th>MRR</th><th>Context recall</th><th>Median latency</th></tr></thead>
+<tbody>
+<tr><td>dense</td><td>0.90</td><td>1.00</td><td>0.95</td><td>1.00</td><td>0.13 s</td></tr>
+<tr><td>sparse</td><td>0.75</td><td>0.97</td><td>0.84</td><td>0.95</td><td>0.12 s</td></tr>
+<tr><td>hybrid</td><td>0.82</td><td>1.00</td><td>0.90</td><td>0.97</td><td>0.12 s</td></tr>
+<tr><td>hybrid + rerank top 10</td><td>0.95</td><td>1.00</td><td>0.97</td><td>1.00</td><td>7.5 s</td></tr>
+<tr><td>hybrid + rerank top 15, 256 tokens</td><td>0.95</td><td>1.00</td><td>0.97</td><td>1.00</td><td>9.4 s</td></tr>
+<tr><td>hybrid + rerank top 30</td><td>0.95</td><td>1.00</td><td>0.97</td><td>1.00</td><td>20.7 s</td></tr>
+</tbody>
+</table>
 
 - **Reranking improves ordering** (Recall@1 0.82 → 0.95), and depth beyond 10 gave no further gain on this set. The default of 20 leaves headroom for the full 1,000-document corpus, where the right chunk may rank lower in search; it was not measured separately (expect ~14 s on CPU).
 - **`--max-length 256`** gave the same quality as 512 at the same depth, so 512 stays the default.
@@ -39,16 +47,20 @@ uv run kb eval                                        # all six configurations (
 
 ## `kb eval-answers` — answer evaluation
 
-| Option | Meaning |
-|---|---|
-| `--questions LIST` | Only these golden IDs, e.g. `q001,q012` |
-| `--types LIST` | Only these question types: `lookup`, `howto`, `compare`, `unanswerable` |
-| `--no-judge` | Skip the LLM faithfulness judge (about a third faster) |
-| `--model NAME` | Answer model from `config/models.yaml` (default: the answer role); the report records it as `answer_model` |
-| `--judge-model NAME` | Faithfulness judge model (default: the judge role, local by default) |
-| `--no-compare` | Answer comparisons with one search (baseline for the comparison path) |
-| `--no-refusal-retry` | No second attempt after a refusal (baseline for the refusal retry, which is on by default) |
-| `--details` | Also print missing `must_include` strings and unsupported claims per question |
+<table style="width:100%">
+<colgroup><col style="width:40%"><col style="width:60%"></colgroup>
+<thead><tr><th>Option</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>--questions LIST</code></td><td>Only these golden IDs, e.g. <code>q001,q012</code></td></tr>
+<tr><td><code>--types LIST</code></td><td>Only these question types: <code>lookup</code>, <code>howto</code>, <code>compare</code>, <code>unanswerable</code></td></tr>
+<tr><td><code>--no-judge</code></td><td>Skip the LLM faithfulness judge (about a third faster)</td></tr>
+<tr><td><code>--model NAME</code></td><td>Answer model from <code>config/models.yaml</code> (default: the answer role); the report records it as <code>answer_model</code></td></tr>
+<tr><td><code>--judge-model NAME</code></td><td>Faithfulness judge model (default: the judge role, local by default)</td></tr>
+<tr><td><code>--no-compare</code></td><td>Answer comparisons with one search (baseline for the comparison path)</td></tr>
+<tr><td><code>--no-refusal-retry</code></td><td>No second attempt after a refusal (baseline for the refusal retry, which is on by default)</td></tr>
+<tr><td><code>--details</code></td><td>Also print missing <code>must_include</code> strings and unsupported claims per question</td></tr>
+</tbody>
+</table>
 
 Runs every golden question through the full pipeline (full access, no release filter) and scores:
 
@@ -70,12 +82,16 @@ uv run kb eval-answers                                     # whole set with the 
 
 ## `kb calibrate` — the "not found" threshold
 
-| Option | Meaning |
-|---|---|
-| `--report PATH` | Answer evaluation report(s) to use, repeatable (default: the latest full run per answer model in `data/eval/`) |
-| `--thresholds LIST` | Candidate thresholds, comma-separated (default: 0 to 0.9) |
-| `--all` | Count every golden question, not only those marked `status: reviewed` |
-| `--details` | List, per threshold, the questions whose answers would be lost or whose outcome is unmeasured |
+<table style="width:100%">
+<colgroup><col style="width:40%"><col style="width:60%"></colgroup>
+<thead><tr><th>Option</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>--report PATH</code></td><td>Answer evaluation report(s) to use, repeatable (default: the latest full run per answer model in <code>data/eval/</code>)</td></tr>
+<tr><td><code>--thresholds LIST</code></td><td>Candidate thresholds, comma-separated (default: 0 to 0.9)</td></tr>
+<tr><td><code>--all</code></td><td>Count every golden question, not only those marked <code>status: reviewed</code></td></tr>
+<tr><td><code>--details</code></td><td>List, per threshold, the questions whose answers would be lost or whose outcome is unmeasured</td></tr>
+</tbody>
+</table>
 
 The gate refuses without calling the LLM when the top rerank score is below `KB_NOT_FOUND_SCORE`. `kb calibrate` replays every candidate threshold on an evaluation report without running any model: a question scoring below the candidate is refused by the gate, every other question keeps the outcome the report recorded. That is exact for thresholds at or above the one the report was run with; below it, questions the gate refused at run time would reach the LLM with an unknown outcome ("unmeasured"). Answers are re-scored against the current golden set, so a report from before a golden-set review still counts correctly.
 
