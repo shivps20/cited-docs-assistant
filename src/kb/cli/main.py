@@ -55,6 +55,8 @@ def main(argv: list[str] | None = None) -> int:
                          help="show the chunks (all, or of --section) as they will be embedded")
     chunk = commands.add_parser("chunk", help="build sections + chunks from parsed documents and store them")
     chunk.add_argument("--doc", action="append", metavar="DOC_ID", help="only this document (repeatable)")
+    chunk.add_argument("--force", action="store_true",
+                       help="rebuild documents already up to date (after structure / chunking code or domain.yaml changes)")
     coverage = commands.add_parser("coverage", help="check golden facts are present in stored chunks")
     coverage.add_argument("--all", action="store_true", help="list passing questions too")
     index = commands.add_parser("index", help="embed chunks and write them to Qdrant")
@@ -157,7 +159,7 @@ def _run(args: argparse.Namespace) -> int:
             return inspect_chunks(args.doc_id, args.section)
         return inspect_document(args.doc_id, args.section, args.details)
     if args.command == "chunk":
-        return chunk_documents(args.doc)
+        return chunk_documents(args.doc, args.force)
     if args.command == "coverage":
         return show_coverage(args.all)
     if args.command == "index":

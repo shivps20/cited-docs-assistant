@@ -369,3 +369,16 @@ def test_unnumbered_toc_headings_become_top_level_sections():
     assert [(s.number, s.title, s.level) for s in st.sections] == [
         ("1", "Introduction", 1), ("2", "Pre-requisites", 1), ("3", "Installation", 1)]
     assert [b.text for b in st.get("2").blocks] == ["Java 17.", "Note:", "A note."]
+
+
+def test_pptx_chapter_title_repeated_over_slides_is_kept():
+    # "Storage Systems" titles slides 3-6 (and is listed on the agenda): a chapter, not a running header;
+    # the footer repeated on every slide is plain text and still goes.
+    footer = "Acme Corp | Internal use"
+    elements = [E("heading", "Agenda", 1), E("text", "Storage Systems", 1), E("text", footer, 1),
+                E("heading", "Guidelines", 2), E("text", "Keep connections low.", 2), E("text", footer, 2)]
+    for slide, body in zip(range(3, 7), ("RAID layout", "JBOD placement", "SAN striping", "Veritas option"), strict=True):
+        elements += [E("heading", "Storage Systems", slide), E("text", body, slide), E("text", footer, slide)]
+    s = build_structure(elements, doc_type="pptx", n_pages=6)
+    assert [(sec.number, sec.title) for sec in s.sections] == [("2", "Guidelines"), ("3", "Storage Systems")]
+    assert sum(1 for sec in s.sections[1:] for b in sec.blocks) == 4 and s.removed_lines == {footer: 6}

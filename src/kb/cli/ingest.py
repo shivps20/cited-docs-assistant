@@ -381,16 +381,32 @@ def inspect_chunks(doc_id: str, section_number: str | None) -> int:
     return 0
 
 
-def chunk_documents(doc_ids: list[str] | None) -> int:
-    """`kb chunk`: rebuild sections and chunks from the cached parses and store them in SQLite."""
+def chunk_documents(doc_ids: list[str] | None, force: bool = False) -> int:
+    """`kb chunk [--doc ID] [--force]`: build sections and chunks from the cached parses and store them in SQLite.
+
+    Documents already chunked from the same parse, chunker version, title and release are skipped (so
+    `kb index` only embeds what changed); --force rebuilds them too (after code or domain.yaml changes)."""
     from kb.core.db import connect
-    from kb.ingest.chunk import bge_m3_token_counter, chunk_document, store_document
+    from kb.ingest.chunk import (
+        bge_m3_token_counter,
+        chunk_document,
+        chunks_up_to_date,
+        store_document,
+    )
 
     docs = _manifest_docs(doc_ids)
     if docs is None:
         return 1
-    count = bge_m3_token_counter()
     conn = connect()
+    skipped = 0
+    if not force:
+        todo = [d for d in docs if not chunks_up_to_date(conn, d)]
+        skipped, docs = len(docs) - len(todo), todo
+    if not docs:
+        print(f"nothing to chunk: {skipped} documents up to date (use --force to rebuild them)")
+        conn.close()
+        return 0
+    count = bge_m3_token_counter()
     print(f"{'doc_id':<44} {'sections':>8} {'chunks':>6} {'avg tok':>7} {'max tok':>7} "
           f"{'tables':>6} {'code':>5} {'mixed':>5}")
     failed = total = 0
@@ -413,7 +429,8 @@ def chunk_documents(doc_ids: list[str] | None) -> int:
         print(f"{doc.doc_id:<44} {len(structure.sections):>8} {len(chunks):>6} {sum(tokens) // len(tokens):>7} "
               f"{max(tokens):>7} {kinds.count('table'):>6} {kinds.count('code'):>5} {kinds.count('mixed'):>5}")
     conn.close()
-    print(f"\n{len(docs) - failed} documents chunked, {failed} failed/skipped; {total} chunks stored")
+    print(f"\n{len(docs) - failed} documents chunked, {failed} failed/skipped, {skipped} up to date "
+          f"(--force rebuilds those); {total} chunks stored")
     return 1 if failed else 0
 
 

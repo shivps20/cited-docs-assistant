@@ -101,9 +101,8 @@ def section_label(section: Section, doc_type: str) -> str:
 
 def section_header(doc: Document, structure: Structure, section: Section) -> str:
     """Contextual header for a section's chunks, e.g. 'Title [R2026x] > 3 Setup > 3.1 Ports'."""
-    release = "" if doc.release_label == "any" else f" [{doc.release_label}]"
     path = " > ".join(section_label(s, doc.doc_type) for s in structure.path(section))
-    return f"{doc.title}{release} > {path}"
+    return f"{header_prefix(doc)}{path}"
 
 
 # ---------------------------------------------------------------------------- block preparation
@@ -227,6 +226,26 @@ def chunk_document(doc: Document, structure: Structure, count: TokenCounter) -> 
 
 
 # ---------------------------------------------------------------------------- storage
+
+def header_prefix(doc: Document) -> str:
+    """The start of every chunk header of the document: 'Title [R2026x] > ' (no release part for 'any')."""
+    release = "" if doc.release_label == "any" else f" [{doc.release_label}]"
+    return f"{doc.title}{release} > "
+
+
+def chunks_up_to_date(conn: sqlite3.Connection, doc: Document) -> bool:
+    """Can `kb chunk` skip this document? Yes when it is chunked or indexed from the current parse (a changed
+    file resets the status to 'parsed'), with this CHUNKER_VERSION, and its stored chunk headers still start
+    with the manifest's current title and release. Code or domain.yaml changes need `kb chunk --force`."""
+    row = conn.execute("SELECT status, chunker_version, chunk_count FROM documents WHERE doc_id = ?",
+                       (doc.doc_id,)).fetchone()
+    if row is None or row["status"] not in ("chunked", "indexed") or row["chunker_version"] != CHUNKER_VERSION:
+        return False
+    if row["chunk_count"] == 0:                 # nothing to compare (e.g. an image-only PDF): chunked is final
+        return True
+    header = conn.execute("SELECT header FROM chunks WHERE doc_id = ? LIMIT 1", (doc.doc_id,)).fetchone()
+    return header is not None and header["header"].startswith(header_prefix(doc))
+
 
 def store_document(conn: sqlite3.Connection, doc: Document, structure: Structure, chunks: list[Chunk],
                    count: TokenCounter) -> None:

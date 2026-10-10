@@ -10,7 +10,7 @@ uv run kb status                           # status and parse statistics per doc
 uv run kb inspect DOC_ID [--details]       # rebuilt section tree (numbers, pages, size)
 uv run kb inspect DOC_ID --section 3.1.7   # content of one section as it will be chunked
 uv run kb inspect DOC_ID --chunks [--section 3.1.7]   # chunks as they will be embedded (preview)
-uv run kb chunk [--doc DOC_ID]             # build + store sections and chunks in SQLite
+uv run kb chunk [--doc DOC_ID] [--force]   # sections + chunks in SQLite (new or changed documents only)
 uv run kb coverage                         # are golden facts present in the stored chunks?
 uv run kb index [--doc DOC_ID] [--force] [--prune]   # embed (bge-m3, GPU) and write to Qdrant
 ```
@@ -110,12 +110,14 @@ uv run kb inspect install-guide --chunks --section 3.1  # that section's chunks
 | Option | Meaning |
 |---|---|
 | `--doc DOC_ID` | Only this document; repeatable |
+| `--force` | Rebuild documents that are up to date too: needed after changes to the structure or chunking code or to `config/domain.yaml` |
 
-Always rebuilds from the cached parse and replaces the document's sections and chunks in SQLite; the next `kb index` then re-embeds it.
+Builds sections and chunks from the cached parse and replaces the document's sections and chunks in SQLite; the next `kb index` then re-embeds it. A document is skipped when it is already chunked (or indexed) from the same parse, with the current chunker version, and its stored chunk headers still carry the manifest's current title and release; a changed file (re-parsed), a new title or release, or an older chunker version rebuilds it. So a plain `kb chunk` after adding documents only chunks the new ones, and `kb index` only embeds those.
 
 ```bash
-uv run kb chunk
-uv run kb chunk --doc sso-setup --doc role-overview
+uv run kb chunk                                      # new or changed documents
+uv run kb chunk --doc sso-setup --doc role-overview  # these two (if not up to date)
+uv run kb chunk --force                              # everything, after a code or domain.yaml change
 ```
 
 ### `kb coverage` — golden facts present in the chunks?
@@ -277,7 +279,7 @@ uv run kb index
 uv run kb coverage
 ```
 
-**After changing the structure or chunking code:** `uv run kb chunk` (all, or the affected `--doc`s), then `uv run kb index`, `uv run kb coverage` and `uv run kb eval --configs dense,hybrid+rr10`.
+**After changing the structure or chunking code, or `config/domain.yaml`:** `uv run kb chunk --force` (all, or the affected `--doc`s), then `uv run kb index`, `uv run kb coverage` and `uv run kb eval --configs dense,hybrid+rr10`.
 
 **Only manifest values changed** (groups, external_ok, release range, version): `uv run kb manifest validate`, then `uv run kb index` updates the payloads without re-embedding.
 
