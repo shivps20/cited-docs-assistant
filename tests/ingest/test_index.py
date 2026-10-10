@@ -46,7 +46,7 @@ def add_document(conn, doc_id: str, n_chunks: int, status: str = "chunked") -> N
 
 @pytest.fixture
 def env(tmp_path):
-    db = tmp_path / "kb.core.db"
+    db = tmp_path / "kb.db"
     migrate(connect(db, check_schema=False))
     conn = connect(db)
     client = QdrantClient(":memory:")

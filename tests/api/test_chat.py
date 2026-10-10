@@ -135,7 +135,7 @@ def parse_sse(text):
 
 @pytest.fixture
 def app_env(tmp_path, monkeypatch):
-    db = tmp_path / "kb.core.db"
+    db = tmp_path / "kb.db"
     c = connect(db, check_schema=False)
     migrate(c)
     c.close()

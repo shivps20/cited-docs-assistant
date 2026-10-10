@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     qdrant_collection: str = "kb_chunks"
 
     # Local storage; relative paths resolve from the project root
-    db_path: Path = Field(Path("data/kb.core.db"), validation_alias="KB_DB_PATH")
+    db_path: Path = Field(Path("data/kb.db"), validation_alias="KB_DB_PATH")
     docs_dir: Path = Field(Path("data/documents"), validation_alias="KB_DOCS_DIR")
     manifest_path: Path = Field(Path("config/manifest.csv"), validation_alias="KB_MANIFEST_PATH")
     parsed_dir: Path = Field(Path("data/parsed"), validation_alias="KB_PARSED_DIR")

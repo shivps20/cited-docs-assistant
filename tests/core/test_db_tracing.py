@@ -9,7 +9,7 @@ from kb.core.tracing import Tracer
 
 @pytest.fixture
 def conn(tmp_path):
-    path = tmp_path / "kb.core.db"
+    path = tmp_path / "kb.db"
     migrate(connect(path, check_schema=False))
     c = connect(path)
     yield c
@@ -17,7 +17,7 @@ def conn(tmp_path):
 
 
 def test_migrate_fresh_db(tmp_path):
-    c = connect(tmp_path / "kb.core.db", check_schema=False)
+    c = connect(tmp_path / "kb.db", check_schema=False)
     assert migrate(c) == list(range(1, SCHEMA_VERSION + 1))
     assert migrate(c) == []  # idempotent
     assert schema_version(c) == SCHEMA_VERSION

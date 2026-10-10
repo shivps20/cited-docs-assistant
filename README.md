@@ -4,7 +4,7 @@ A local, retrieval-augmented question-answering assistant over technical documen
 
 Everything runs on one workstation: Qdrant in Docker, bge-m3 embeddings and the bge-reranker in-process, and a local LLM through Ollama. Other models (OpenAI, Mistral, Gemini, Claude) can be added in `config/models.yaml` and chosen per question; they only ever see documents cleared for external use (`external_ok` in the manifest).
 
-> **Status:** ingestion, retrieval, cited answers (including comparisons across documents), evaluation, chat API, web UI and a configurable choice of language model are working. See [Documentation](#documentation) for the commands, settings, API and evaluation. Project notes are kept locally (`docs/local/`), not in the repository.
+> **Status:** ingestion, retrieval, cited answers (including comparisons across documents), evaluation (including calibration of the "not found" threshold), chat API, web UI, a configurable choice of language model and an answer cache for repeated questions are working. See [Documentation](#documentation) for the commands, settings, API and evaluation. Project notes are kept locally (`docs/local/`), not in the repository.
 
 ## How it works
 
@@ -12,7 +12,8 @@ Everything runs on one workstation: Qdrant in Docker, bge-m3 embeddings and the 
 Ingestion (offline)                         Query (per request)
 -------------------                         -------------------
 documents + manifest                        question
-  -> Docling parse                            -> condense follow-up, route (comparison: one search per side)
+  -> Docling parse                            -> condense follow-up; asked before? answer from the cache
+                                              -> route (comparison: one search per side)
   -> structure-aware chunks                   -> hybrid search in Qdrant (dense + sparse, RRF)
   -> metadata from manifest                   -> filters: access groups, release, latest revision
   -> bge-m3 dense + sparse                    -> rerank -> confidence gate -> assemble context
@@ -98,7 +99,7 @@ The 6 GB GPU can't hold the embedding model and the LLM at once: run ingestion w
 | [docs/commands.md](docs/commands.md) | Every `kb` command with options and examples, typical workflows |
 | [docs/configuration.md](docs/configuration.md) | `.env` settings, `config/` files, organisation-specific rules, the document manifest |
 | [docs/api.md](docs/api.md) | `kb serve`, HTTP endpoints, chat events, the web UI |
-| [docs/evaluation.md](docs/evaluation.md) | Golden set, `kb eval`, `kb eval-answers`, results |
+| [docs/evaluation.md](docs/evaluation.md) | Golden set, `kb eval`, `kb eval-answers`, `kb calibrate`, results |
 
 ## Project layout
 
