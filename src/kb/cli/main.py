@@ -10,6 +10,7 @@ from kb.cli.ingest import (
     index_documents,
     inspect_chunks,
     inspect_document,
+    manifest_backfill,
     manifest_scan,
     manifest_validate,
     parse_documents,
@@ -32,6 +33,10 @@ def main(argv: list[str] | None = None) -> int:
     manifest.add_parser("validate", help="validate the manifest and list documents")
     scan = manifest.add_parser("scan", help="draft rows for files in the documents folder (and subfolders) not yet in the manifest")
     scan.add_argument("--dry-run", action="store_true", help="show what would be drafted, write nothing")
+    scan.add_argument("--folder", metavar="PATH",
+                      help="scan this folder instead of KB_DOCS_DIR; its files are read where they are (absolute paths)")
+    backfill = manifest.add_parser("backfill", help="fill the added date and missing releases of existing rows")
+    backfill.add_argument("--write", action="store_true", help="apply the changes (default: show them only)")
     models = commands.add_parser("models", help="language model catalogue (config/models.yaml)").add_subparsers(
         dest="action", required=True)
     models.add_parser("list", help="validate the catalogue and list models, roles and keys")
@@ -136,7 +141,9 @@ def main(argv: list[str] | None = None) -> int:
 def _run(args: argparse.Namespace) -> int:
     """Run the chosen subcommand."""
     if args.command == "manifest":
-        return manifest_validate() if args.action == "validate" else manifest_scan(args.dry_run)
+        if args.action == "backfill":
+            return manifest_backfill(args.write)
+        return manifest_validate() if args.action == "validate" else manifest_scan(args.dry_run, args.folder)
     if args.command == "cache":
         return cache_stats() if args.action == "stats" else cache_clear(args.stale)
     if args.command == "models":

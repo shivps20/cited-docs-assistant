@@ -123,7 +123,8 @@ def test_scan_drafts(tmp_path, docs_dir):
     (docs_dir / "Acme_Setup_R2025x.pdf").write_bytes(b"x")
     draft = draft_row(docs_dir / "Acme_Setup_R2025x.pdf", docs_dir)
     assert draft["doc_id"] == "acme-setup-r2025x"
-    assert (draft["release_min"], draft["release_max"], draft["category"]) == ("R2025x", "R2025x", "")
+    assert (draft["release_min"], draft["release_max"], draft["category"]) == ("R2025x", "", "administration")
+    assert "category guessed from the name" in draft["review"]
 
 
 
@@ -147,6 +148,7 @@ def test_scan_walks_subfolders_skips_duplicates_and_keeps_ids_unique(tmp_path):
         ("r2026x-guide", "Install/R2026x/guide.pdf"),         # same name as a listed document: folder prefix
         ("setup-r2026x", "Install/R2026x/Setup_R2026x.docx")]
     assert report.rows[0]["family"] == "r2026x-guide" and report.rows[1]["release_min"] == "R2026x"
+    assert "same name as manifest family 'guide'" in report.rows[0]["review"]      # never hides the listed guide
     assert report.duplicates == [("Old/copy of guide.pdf", "manifest doc_id 'guide'"),
                                  ("Old/twin.pptx", "new file 'Install/R2026x/Setup_R2026x.docx'")]
     assert report.by_folder() == {"Install/R2026x": 2}

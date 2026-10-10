@@ -66,7 +66,7 @@ cd knowledgebase_assistant
    ```bash
    ollama pull qwen2.5:7b-instruct
    ```
-7. **Documents and local project data:** point `KB_DOCS_DIR` in `.env` at the folder where your documents already are (subfolders included; default `data/documents/`), run `uv run kb manifest scan` and review the drafted rows in `config/manifest.csv`. Organisation-specific data is never committed; start from the fictional examples:
+7. **Documents and local project data:** put documents in `data/documents/` (or set `KB_DOCS_DIR`), or leave them where they are and add a folder with `uv run kb manifest scan --folder PATH`; review the drafted rows in `config/manifest.csv`. PDF, PPTX and DOCX are read directly; `.ppt` / `.doc` need LibreOffice (converted once before parsing). Organisation-specific data is never committed; start from the fictional examples:
    ```bash
    cp config/manifest.example.csv config/manifest.csv
    cp config/users.example.yaml config/users.yaml

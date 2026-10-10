@@ -63,12 +63,13 @@ uv run python scripts/init_db.py --reset --yes          # empty database, then p
 
 | Command | What it does |
 |---|---|
-| `uv run kb manifest scan [--dry-run]` | Draft rows for the files in `KB_DOCS_DIR` and its subfolders that are not in the manifest: a count per subfolder, files whose content is already listed (or found twice) skipped and reported, doc ids kept unique across subfolders (same file name in two folders gets the folder name as prefix). `--dry-run` shows what would be drafted and writes nothing |
-| `uv run kb manifest validate` | Check every row (columns, categories, releases, duplicate IDs, missing files); lists all problems with line numbers |
+| `uv run kb manifest scan [--folder PATH] [--dry-run]` | Draft rows for the files (types in `KB_DOC_TYPES`) in `KB_DOCS_DIR`, or in `--folder` (any folder, read where it is: rows get absolute paths), and its subfolders that are not in the manifest: a count per subfolder, files whose content is already listed (or found twice) skipped and reported, doc ids kept unique across subfolders (same file name in two folders gets the folder name as prefix). `--dry-run` shows what would be drafted and writes nothing |
+| `uv run kb manifest validate` | Check every row (columns, categories, releases, dates, duplicate IDs, missing files, two rows with the same family and version); lists all problems with line numbers and how to fix a family clash; counts and lists rows still marked for review |
+| `uv run kb manifest backfill [--write]` | Fill what older rows lack: the `added` date (first ingestion in `kb.db`, else the file date) and, for rows without a release, the release from the file name or the PDF's first pages. Shows the changes; `--write` applies them (backup in `data/`) and notes each in the `review` column |
 
 Run `validate` after every edit to `config/manifest.csv`.
 
-**Documents where they already are.** Set `KB_DOCS_DIR` in `.env` to your own folder (e.g. `D:/Docs/Platform`); the documents are read in place, so nothing has to be copied into `data/documents`. Start with `uv run kb manifest scan --dry-run` to see what a folder holds. Drafted rows give access to everyone (`allowed_groups=all`) and keep `external_ok=false`: review access, category, title, version and release range before `kb index`.
+**Documents where they already are.** Keep `KB_DOCS_DIR=data/documents` and add any other folder with `uv run kb manifest scan --folder "E:/Docs/New"`: its files are read where they are (the manifest holds their absolute path), so nothing has to be copied. Start with `--dry-run` to see what a folder holds; files whose content is already in the manifest are skipped. `.ppt` / `.doc` are converted with LibreOffice when parsed (once, cached). Drafted rows give access to everyone (`allowed_groups=all`) and keep `external_ok=false`: review access, category, title, version and release range before `kb index`.
 
 ### `kb parse` — Docling parsing
 

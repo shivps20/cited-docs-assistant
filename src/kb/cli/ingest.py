@@ -8,8 +8,29 @@ from kb.ingest.manifest import (
     append_rows,
     find_unlisted,
     load_manifest,
+    plan_backfill,
+    read_rows,
     scan_folder,
+    write_rows,
 )
+
+COVER_PAGES = 2     # pages read for a release when the file name has none
+
+
+def cover_text(path) -> str:
+    """Text of a PDF's first COVER_PAGES pages (for the release it was written for); '' for other files or errors."""
+    if path.suffix.lower() != ".pdf":
+        return ""
+    import pypdfium2 as pdfium
+
+    try:
+        pdf = pdfium.PdfDocument(path)
+        try:
+            return " ".join(pdf[i].get_textpage().get_text_range() for i in range(min(COVER_PAGES, len(pdf))))
+        finally:
+            pdf.close()
+    except Exception:  # noqa: BLE001 - an unreadable PDF just gives no release suggestion
+        return ""
 
 
 def manifest_validate() -> int:
@@ -30,23 +51,40 @@ def manifest_validate() -> int:
     unlisted = find_unlisted(s.manifest_path, s.docs_dir)
     for path in unlisted:
         print(f"WARN not in manifest: {path.relative_to(s.docs_dir)} (run `kb manifest scan`)")
-    print(f"\nok: {len(docs)} documents, {len(unlisted)} unlisted")
+    to_review = [d for d in docs if d.review]
+    if to_review:
+        print(f"\n{len(to_review)} row(s) marked for review (review column), e.g.:")
+        for d in to_review[:10]:
+            print(f"  {d.doc_id}: {d.review}")
+    print(f"\nok: {len(docs)} documents, {len(unlisted)} unlisted, {len(to_review)} to review")
     return 0
 
 
-def manifest_scan(dry_run: bool = False) -> int:
-    """`kb manifest scan`: draft manifest rows for files in the documents folder (and its subfolders) that are
-    not in the manifest yet; files whose content is already listed are reported, not drafted."""
+def manifest_scan(dry_run: bool = False, folder: str | None = None) -> int:
+    """`kb manifest scan [--folder PATH]`: draft manifest rows for files in the documents folder, or in --folder
+    (any folder, read where it is), and their subfolders that are not in the manifest yet; files whose content
+    is already listed are reported, not drafted. Files outside the documents folder get absolute paths."""
+    import datetime
+    from pathlib import Path
+
     from kb.ingest.parse import file_sha256
 
     sys.stdout.reconfigure(encoding="utf-8")
     s = get_settings()
-    if not s.docs_dir.is_dir():
-        print(f"documents folder not found: {s.docs_dir} (set KB_DOCS_DIR)")
+    root = Path(folder).expanduser().resolve() if folder else s.docs_dir
+    if not root.is_dir():
+        print(f"folder not found: {root}" + ("" if folder else " (set KB_DOCS_DIR)"))
         return 1
-    print(f"documents folder: {s.docs_dir} (KB_DOCS_DIR)")
-    report = scan_folder(s.manifest_path, s.docs_dir, file_sha256)
-    print(f"supported files (PDF, PPTX, DOCX): {report.supported} · in the manifest: {report.listed} · "
+    inside = root.resolve().is_relative_to(s.docs_dir.resolve())
+    print(f"scanning: {root}")
+    if not folder:
+        print("  (the documents folder, KB_DOCS_DIR)")
+    elif not inside:
+        print("  outside the documents folder: rows get absolute paths, files are read where they are")
+    report = scan_folder(s.manifest_path, s.docs_dir, file_sha256,
+                         today=datetime.datetime.now().astimezone().date().isoformat(), cover_text=cover_text,
+                         folder=root)
+    print(f"supported files ({s.doc_types}): {report.supported} · in the manifest: {report.listed} · "
           f"new: {len(report.rows)} · duplicates skipped: {len(report.duplicates)}")
     for rel, original in report.duplicates:
         print(f"SKIP {rel}: same content as {original}")
@@ -54,19 +92,67 @@ def manifest_scan(dry_run: bool = False) -> int:
         print("no new files to draft")
         return 0
     print("\nnew files by folder:")
-    for folder, n in report.by_folder().items():
-        print(f"  {n:4d}  {'(documents folder itself)' if folder == '.' else folder + '/'}")
+    for sub, n in report.by_folder().items():
+        print(f"  {n:4d}  {'(the scanned folder itself)' if sub == '.' else sub + '/'}")
     print()
     for row in report.rows:
-        print(f"{'would add' if dry_run else '+'} {row['doc_id']}  {row['path']}  release={row['release_min'] or '?'}")
+        release = "-".join(dict.fromkeys(filter(None, [row["release_min"], row["release_max"]]))) or "any"
+        print(f"{'would add' if dry_run else '+'} {row['doc_id']}  {row['path']}  v{row['version']}  {release}  "
+              f"{row['category']}\n      review: {row['review']}")
     if dry_run:
         print(f"\ndry run: {len(report.rows)} draft rows not written; run without --dry-run to append them")
         return 0
     append_rows(s.manifest_path, report.rows)
     print(f"\nappended {len(report.rows)} draft rows to {s.manifest_path.name}.")
     print("REVIEW BEFORE kb index: drafted rows give access to everyone (allowed_groups=all) and keep "
-          "external_ok=false; set allowed_groups, external_ok, category, title, version and the release range, "
-          "then run `kb manifest validate`.")
+          "external_ok=false; check allowed_groups, external_ok and every note in the review column (guessed "
+          "category, release, version), clear the note when done, then run `kb manifest validate`.")
+    return 0
+
+
+def manifest_backfill(write: bool = False) -> int:
+    """`kb manifest backfill [--write]`: fill what older manifest rows lack: the added date (first ingestion in
+    kb.db, else the file's date) and, for rows without any release, the release from the file name or the PDF's
+    first pages. Shows the changes; --write applies them (backup in data/) and marks them for review."""
+    import datetime
+    import shutil
+
+    from kb.core.db import connect
+
+    sys.stdout.reconfigure(encoding="utf-8")
+    s = get_settings()
+    rows = read_rows(s.manifest_path)
+    first_seen: dict[str, str] = {}
+    if s.db_path.exists():
+        conn = connect()
+        try:
+            first_seen = {r["doc_id"]: (r["created_at"] or "")[:10]
+                          for r in conn.execute("SELECT doc_id, created_at FROM documents")}
+        finally:
+            conn.close()
+
+    def added_for(row: dict[str, str]) -> str:
+        """First ingestion date from kb.db, else the file's modification date, else ''."""
+        if first_seen.get(row["doc_id"]):
+            return first_seen[row["doc_id"]]
+        path = s.docs_dir / row["path"]
+        return (datetime.datetime.fromtimestamp(path.stat().st_mtime).astimezone().date().isoformat()
+                if path.is_file() else "")
+
+    changes = plan_backfill(rows, s.docs_dir, added_for, cover_text)
+    releases = [c for c in changes if ": release" in c or "review note" in c]
+    dates = len(changes) - len(releases)
+    for change in releases:
+        print(change)
+    print(f"\n{dates} added date(s), {len(releases)} release change(s) / note(s) for {len(rows)} rows")
+    if not write:
+        print("dry run: nothing written; run with --write to apply (a backup of the manifest is kept in data/)")
+        return 0
+    backup = s.db_path.parent / f"manifest.backup-{datetime.datetime.now().astimezone():%Y%m%d-%H%M%S}.csv"
+    shutil.copy2(s.manifest_path, backup)
+    write_rows(s.manifest_path, rows)
+    print(f"written {s.manifest_path.name} (backup: {backup}). Next: `kb manifest validate`, then `kb index` "
+          "(release changes update the stored metadata in place, no re-embedding).")
     return 0
 
 

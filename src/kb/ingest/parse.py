@@ -9,7 +9,10 @@ PARSER_VERSION is bumped, or --force is given.
 import hashlib
 import json
 import logging
+import shutil
 import sqlite3
+import subprocess
+import tempfile
 import time
 from collections import Counter
 from dataclasses import dataclass
@@ -23,7 +26,7 @@ from docling_core.types.doc import (
 )
 
 from kb.core.config import get_settings
-from kb.ingest.manifest import Document
+from kb.ingest.manifest import LEGACY_FORMATS, Document, manifest_path_for
 
 # Bump when converter options change, so cached parses made with the old options are redone.
 PARSER_VERSION = 1
@@ -129,8 +132,50 @@ def document_stats(dl: DoclingDocument) -> dict:
     }
 
 
+def find_soffice() -> str | None:
+    """LibreOffice's soffice: KB_SOFFICE, else on PATH, else the usual Windows install folders."""
+    configured = get_settings().soffice
+    if configured:
+        return configured
+    found = shutil.which("soffice") or shutil.which("soffice.exe")
+    if found:
+        return found
+    for base in (Path(r"C:\Program Files\LibreOffice"), Path(r"C:\Program Files (x86)\LibreOffice")):
+        candidate = base / "program" / "soffice.exe"
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+def convert_legacy(doc: Document, file_hash: str) -> Path:
+    """A .ppt / .doc converted to .pptx / .docx with LibreOffice (headless), cached by doc id and file hash
+    under data/parsed/converted/; Docling then parses the converted copy. Raises RuntimeError when
+    LibreOffice is missing or the conversion fails."""
+    target_ext = LEGACY_FORMATS[doc.path.suffix.lower()]
+    out_dir = get_settings().parsed_dir / "converted"
+    target = out_dir / f"{doc.doc_id}.{file_hash[:12]}.{target_ext}"
+    if target.exists():
+        return target
+    soffice = find_soffice()
+    if soffice is None:
+        raise RuntimeError(f"{doc.path.name}: .{doc.path.suffix.lower().lstrip('.')} needs LibreOffice to convert "
+                           f"it (install it, set KB_SOFFICE, or save the file as .{target_ext})")
+    with tempfile.TemporaryDirectory() as tmp:
+        subprocess.run([soffice, "--headless", "--norestore", "--convert-to", target_ext, "--outdir", tmp, str(doc.path)],
+                       check=True, capture_output=True, timeout=600)
+        produced = Path(tmp) / f"{doc.path.stem}.{target_ext}"
+        if not produced.is_file():
+            raise RuntimeError(f"{doc.path.name}: LibreOffice did not produce a .{target_ext}")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for stale in out_dir.glob(f"{doc.doc_id}.*.{target_ext}"):
+            stale.unlink()
+        shutil.move(str(produced), target)
+    return target
+
+
 def parse_document(doc: Document, converter, *, force: bool = False) -> tuple[DoclingDocument, ParseStats, str]:
-    """Parse one document (or load its cache). Returns the Docling document, stats and file hash."""
+    """Parse one document (or load its cache). Returns the Docling document, stats and file hash.
+    A legacy .ppt / .doc is converted to .pptx / .docx first (convert_legacy); the hash is the original's."""
     file_hash = file_sha256(doc.path)
     target = cache_path(doc.doc_id, file_hash)
     if target.exists() and not force:
@@ -138,7 +183,8 @@ def parse_document(doc: Document, converter, *, force: bool = False) -> tuple[Do
         return dl, ParseStats(doc.doc_id, seconds=0.0, cached=True, **document_stats(dl)), file_hash
 
     start, cpu_start = time.perf_counter(), time.process_time()
-    result = converter.convert(doc.path)
+    source = convert_legacy(doc, file_hash) if doc.path.suffix.lower() in LEGACY_FORMATS else doc.path
+    result = converter.convert(source)
     seconds, cpu_seconds = time.perf_counter() - start, time.process_time() - cpu_start
     dl = result.document
 
@@ -160,7 +206,7 @@ def record_document(conn: sqlite3.Connection, doc: Document, *, status: str, fil
     A cache hit on an already chunked/indexed document keeps its later status; parse_seconds
     and parsed_at only change on a real parse, not a cache hit.
     """
-    rel_path = doc.path.relative_to(get_settings().docs_dir.resolve()).as_posix()
+    rel_path = manifest_path_for(doc.path, get_settings().docs_dir)     # relative, or absolute outside it
     real_parse = stats is not None and not stats.cached
     stat_values = {c: getattr(stats, c) if stats else None for c in STAT_COLUMNS}
     stat_insert = ", ".join(STAT_COLUMNS)

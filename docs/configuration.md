@@ -10,7 +10,9 @@ All settings come from `.env` (see [.env.example](../.env.example)) through `kb.
 |---|---|---|
 | `QDRANT_URL`, `QDRANT_COLLECTION` | `http://127.0.0.1:6444`, `kb_chunks` | Vector store |
 | `KB_DB_PATH` | `data/kb.db` | SQLite database |
-| `KB_DOCS_DIR`, `KB_MANIFEST_PATH` | `data/documents`, `config/manifest.csv` | The documents folder (any folder on disk, absolute or relative to the project; subfolders included; documents are read in place, not copied) and the manifest |
+| `KB_DOCS_DIR`, `KB_MANIFEST_PATH` | `data/documents`, `config/manifest.csv` | The documents folder (subfolders included; manifest paths are relative to it) and the manifest. Documents elsewhere are added with `kb manifest scan --folder PATH` and read in place (absolute paths in the manifest) |
+| `KB_DOC_TYPES` | `pdf,pptx,ppt,docx,doc` | File types picked up by `kb manifest scan` and accepted in the manifest. `.ppt` / `.doc` (old binary formats) are converted once to `.pptx` / `.docx` with LibreOffice before parsing, cached in `data/parsed/converted/` |
+| `KB_SOFFICE` | *(found automatically)* | Path to LibreOffice's `soffice` when it is not on the PATH or in `C:/Program Files/LibreOffice` |
 | `EMBED_MODEL_PATH`, `RERANK_MODEL_PATH`, `DOCLING_ARTIFACTS_PATH` | `models/...` | Local models |
 | `HF_HUB_OFFLINE` | `1` | Never download models at runtime |
 | `KB_RERANK_TOP` | `20` | Candidates reranked per search (see [architecture.md](architecture.md#retrieval)) |
@@ -65,18 +67,30 @@ Changing `boilerplate_patterns` or `command_patterns` changes sections and chunk
 | Column | Example | Purpose |
 |---|---|---|
 | `doc_id` | `install-guide` | Stable ID used in citations and re-ingestion |
-| `path` | `Install/Acme_Platform_Installation_Guide.pdf` | File, relative to `KB_DOCS_DIR`; may include subfolders |
+| `path` | `Install/Acme_Platform_Installation_Guide.pdf` | File, relative to `KB_DOCS_DIR` (may include subfolders), or an absolute path such as `E:/Docs/New/Guide.pptx` for a document kept outside it |
 | `title` | Acme Platform Installation Guide | Shown in answer citations |
 | `family`, `version` | `install-guide`, `2.0` | The highest version per family is the latest revision |
 | `release_min`, `release_max` | `R2024x`, *(blank)* | Release range the document applies to; blank = open-ended |
 | `allowed_groups` | `all` or `internal` | `;`-separated access groups |
 | `external_ok` | `true` | May its text be sent to an external LLM (OpenAI, Mistral, Gemini, Claude) |
 | `category` | `installation` | One of: installation, administration, authentication, infrastructure, upgrade, performance, applications, functional, troubleshooting (defined in `kb.manifest.CATEGORIES`) |
+| `added` | `2026-10-10` | Date the row was added (`YYYY-MM-DD`, blank allowed); filled by `kb manifest scan` and, for older rows, `kb manifest backfill` |
+| `review` | `category guessed from the name` | What still needs a human check; blank = reviewed. `kb manifest validate` counts and lists these rows |
+
+How `kb manifest scan` drafts a row (every guess is written into `review`):
+
+- **doc_id / family** from the whole file name without its version (no cut at 60 characters; names over 100 characters are shortened with a short hash): separators do not matter, so `Configuring-Secure_Socket` and `Configuring Secure Socket` are the same name.
+- **version** from a suffix at the end of the name (`_V2.0`, `-v1`, ` V3.1 Internal`, ` Rev 3`), so revisions of a guide share a family: `…_V1.0.pdf` and `…_V2.0.pdf` → family `…`, versions 1.0 and 2.0. "ENOVIA V6" / "CATIA V5" are product generations, not versions. A file without a version beside versioned ones is drafted as the newest; a file whose name matches a family already in the manifest gets a family of its own (joining would hide the listed document from search).
+- **release** from the name (`R2021x`, `V6R2021x`, `2021x`, `21x`, `R2017xFP1705`, `R15xGA`) or, without one, from the PDF's first two pages; always as "from that release on": `release_min` set, `release_max` left open (set an end yourself when a guide stops applying). Several releases on the first pages are only noted.
+- **category** guessed from words in the name and folders (85% agreement with the hand-made categories of the current corpus).
+- **access**: `allowed_groups=all`, `external_ok=false`: review before `kb index`.
+
+Older rows (without `added`, or without a release) are filled by `uv run kb manifest backfill` (shows the changes) and `uv run kb manifest backfill --write` (applies them, with a backup in `data/`): `added` from the first ingestion in `kb.db` (else the file date), the release from the name or the first pages, marked in `review`. Category, access and versions are not touched. Close the manifest in Excel first: Windows locks an open file. Saving in Excel rewrites the `added` dates in the machine's short-date format (e.g. `10/8/2026`); they are still accepted (US month/day and European day.month.year) and the next rewrite by `kb manifest scan` or `backfill --write` stores them as `YYYY-MM-DD` again.
 
 Adding documents:
 
 ```bash
-uv run kb manifest scan       # appends draft rows for new files (release guessed from filename)
+uv run kb manifest scan       # appends draft rows for new files (version, release and category guessed; see below)
 uv run kb manifest validate   # reports every problem with its line number
 ```
 
