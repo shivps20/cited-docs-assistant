@@ -88,14 +88,16 @@ def _words(text: str) -> list[str]:
 
 
 def evidence_in_sources(evidence: str, sources_text: str) -> bool:
-    """Does the quoted evidence occur in the sources, word for word (case, punctuation, markdown
-    and line breaks ignored)? A quote shortened with '...' is checked piece by piece.
+    """Does the quoted evidence occur in the sources, word for word (case, punctuation and markdown
+    ignored)? A quote shortened with '...' and a quote of several lines are checked piece by piece:
+    judges often quote the same fact from two sources on two lines, which never occurs as one passage
+    (trace aaadab91: 3 of 9 claims wrongly unsupported).
 
     Deliberately strict: a judge that 'quotes' the source with one value changed (HTTP-Redirect
-    instead of HTTP-POST) must not count as evidence.
+    instead of HTTP-POST) must not count as evidence; every piece must occur as it is.
     """
     haystack = " " + " ".join(_words(sources_text)) + " "
-    pieces = [" ".join(_words(p)) for p in re.split(r"\.\.\.|…", evidence)]
+    pieces = [" ".join(_words(p)) for p in re.split(r"\.\.\.|…|\n", evidence)]
     pieces = [p for p in pieces if p]
     return bool(pieces) and all(f" {p} " in haystack for p in pieces)
 

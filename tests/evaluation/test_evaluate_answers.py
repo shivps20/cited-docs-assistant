@@ -128,6 +128,14 @@ def test_evidence_must_occur_word_for_word():
     assert not evidence_in_sources("", SOURCE_TEXT)
 
 
+def test_a_quote_of_several_lines_is_checked_line_by_line():
+    """The same fact quoted from two sources on two lines counts; a changed value on any line does not."""
+    two_sources = SOURCE_TEXT + "\nOther guide: indexdepth | Accepted values: integer greater than 1 Default: 6"
+    quote = "- Ensure that the SSO HTTP-POST binding is selected.\n- indexdepth | Accepted values: integer greater than 1"
+    assert evidence_in_sources(quote, two_sources)
+    assert not evidence_in_sources(quote.replace("HTTP-POST", "HTTP-Redirect"), two_sources)
+
+
 def test_quotes_decide_support_over_the_judges_label():
     reply = ('{"claims": ['
              '{"claim": "default depth 6", "evidence": "Default: 6", "supported": false},'
