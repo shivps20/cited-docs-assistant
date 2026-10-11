@@ -1,11 +1,17 @@
+import pytest
+
+from kb.ingest import structure
 from kb.ingest.structure import (
     Element,
+    Section,
+    Structure,
     build_structure,
     normalize_line,
     normalize_title,
     parse_toc,
     plausible_next,
     split_number,
+    structure_for,
     table_markdown,
 )
 
@@ -404,3 +410,47 @@ def test_pptx_slides_without_title_placeholder_take_their_first_line():
         ("6", 6, 6, "Slide 6"), ("7", 7, 7, "Slide 7"), ("8", 8, 8, "Slide 8"), ("9", 9, 9, "Slide 9"),
         ("10", 10, 10, "Slide 10"), ("11", 11, 11, "Slide 11")]
     assert [b.text for b in st.get("3").blocks] == ["Preparation:", "step a", "step b"]
+
+
+
+def course_pdf_elements():
+    """A slide deck exported to PDF: one heading and one paragraph per slide, 46 slides."""
+    elements = []
+    for page in range(1, 47):
+        # Distinct words per slide: titles or lines that differ only by a number count as one chapter (titles)
+        # or as a running footer (text), so 10 -> "ba".
+        words = "".join(chr(97 + int(d)) for d in str(page))
+        elements += [E("heading", f"Topic {words} overview", page),
+                     E("text", f"Details about {words} configuration.", page)]
+    return elements
+
+
+@pytest.fixture
+def misread_pdf_rules(monkeypatch):
+    """The PDF rules as they misread the real course PDFs: every topic numbered under one chapter (TD-32)."""
+    real = structure.build_structure
+
+    def fake(elements, doc_type, n_pages, furniture=None):
+        """A misread tree for PDFs; the real rules otherwise."""
+        if doc_type != "pdf":
+            return real(elements, doc_type=doc_type, n_pages=n_pages, furniture=furniture)
+        sections = [Section("3", "Caution / Warning", 1, None, 3)]
+        sections += [Section(f"3.{i}", f"Topic {i}", 2, "3", i) for i in range(1, n_pages)]
+        return Structure(sections, [], [], [], {})
+    monkeypatch.setattr(structure, "build_structure", fake)
+
+
+def test_a_slide_deck_exported_to_pdf_is_built_like_a_deck(misread_pdf_rules):
+    """Landscape pages + 45 topics under one chapter: rebuilt as one section per slide (TD-32)."""
+    st = structure_for(course_pdf_elements(), set(), doc_type="pdf", n_pages=46, landscape=1.0)
+    assert st.layout == "slides (landscape PDF)"
+    assert all(x.parent is None for x in st.sections)
+    assert st.get("10").title == "Topic ba overview" and st.get("10").page_start == 10
+
+
+def test_portrait_or_well_built_pdfs_keep_the_pdf_rules(misread_pdf_rules):
+    """Portrait pages keep the PDF rules even when misread; a landscape PDF with a sound tree too; decks are 'slides'."""
+    elements = course_pdf_elements()
+    assert structure_for(elements, set(), doc_type="pdf", n_pages=46, landscape=0.0).layout == "document"
+    assert structure_for(elements[:12], set(), doc_type="pdf", n_pages=6, landscape=1.0).layout == "document"
+    assert structure_for(elements[:12], set(), doc_type="pptx", n_pages=6, landscape=1.0).layout == "slides"

@@ -148,6 +148,8 @@ uv run kb inspect install-guide --section 3.1           # one section's text
 uv run kb inspect install-guide --chunks --section 3.1  # that section's chunks
 ```
 
+For a slide deck exported to PDF (landscape pages) whose PDF structure would be misread (one section with more than 40 sub-sections: a running heading or an agenda slide taken as a chapter), the output starts with "Built like a deck": such PDFs get one section per page, titled by the page's heading or first line, and their section numbers are page numbers.
+
 ### `kb chunk` — build and store sections and chunks
 
 <table style="width:100%">

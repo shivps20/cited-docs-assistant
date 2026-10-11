@@ -382,6 +382,8 @@ def inspect_document(doc_id: str, section_number: str | None, details: bool) -> 
     if st.toc:
         print(f"TOC: {len(st.toc)} entries, {len(st.toc) - len(st.unmatched_toc)} matched to sections, "
               f"{len(st.unmatched_toc)} unmatched")
+    if st.layout == "slides (landscape PDF)":
+        print("Built like a deck: a slide deck exported to PDF (landscape pages; the PDF rules misread its chapters)")
     print(f"Headings demoted to text: {len(st.demoted_headings)}; "
           f"boilerplate lines removed: {sum(st.removed_lines.values())}\n")
     print(f"{'section':<14} {'pages':>9} {'blocks':>6} {'~tokens':>7}  title")

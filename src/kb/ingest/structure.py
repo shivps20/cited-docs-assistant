@@ -125,6 +125,7 @@ class Structure:
     unmatched_toc: list[TocEntry]
     demoted_headings: list[str]
     removed_lines: dict[str, int]
+    layout: str = "document"        # "slides" for a deck, and for a slide deck exported to PDF (TD-32)
 
     def get(self, number: str) -> Section | None:
         """The section with this number, or None."""
@@ -700,7 +701,44 @@ def extract_elements(dl: DoclingDocument) -> tuple[list[Element], set[str]]:
     return elements, furniture
 
 
+# A slide deck exported to PDF: landscape pages and a section tree the PDF rules misread (one parent with more
+# children than any real chapter has). Measured on 531 PDFs: 221 landscape on every page, 20 of them misread.
+SLIDE_PDF_LANDSCAPE_SHARE = 0.8
+MISREAD_CHILDREN = 40
+
+
+def landscape_share(dl: DoclingDocument) -> float:
+    """Share of the document's pages that are landscape (wider than tall by 15 %); 0 without page sizes."""
+    sizes = [p.size for p in dl.pages.values() if p.size]
+    return sum(1 for s in sizes if s.width > s.height * 1.15) / len(sizes) if sizes else 0.0
+
+
+def misread_chapters(st: Structure) -> bool:
+    """Does one section have more than MISREAD_CHILDREN children? Then running headings ('Caution / Warning')
+    or agenda slides were taken as chapters and every later topic was numbered under one of them (TD-32)."""
+    children: dict[str, int] = defaultdict(int)
+    for s in st.sections:
+        if s.parent:
+            children[s.parent] += 1
+    return max(children.values(), default=0) > MISREAD_CHILDREN
+
+
+def structure_for(elements: list[Element], furniture: set[str], *, doc_type: str, n_pages: int,
+                  landscape: float) -> Structure:
+    """The document's structure: the rules for its type; a PDF whose pages are landscape and whose PDF structure
+    is misread is a slide deck exported to PDF, and is built like a deck instead (one section per slide, titled
+    by its heading or first line; TD-32)."""
+    st = build_structure(elements, doc_type=doc_type, n_pages=n_pages, furniture=furniture)
+    if doc_type == "pptx":
+        st.layout = "slides"
+    elif doc_type == "pdf" and landscape >= SLIDE_PDF_LANDSCAPE_SHARE and misread_chapters(st):
+        st = build_structure(elements, doc_type="pptx", n_pages=n_pages, furniture=furniture)
+        st.layout = "slides (landscape PDF)"
+    return st
+
+
 def document_structure(dl: DoclingDocument, doc_type: str) -> Structure:
-    """Elements from a parsed document, turned into its section structure."""
+    """Elements from a parsed document, turned into its section structure (structure_for)."""
     elements, furniture = extract_elements(dl)
-    return build_structure(elements, doc_type=doc_type, n_pages=max(len(dl.pages), 1), furniture=furniture)
+    return structure_for(elements, furniture, doc_type=doc_type, n_pages=max(len(dl.pages), 1),
+                         landscape=landscape_share(dl))
