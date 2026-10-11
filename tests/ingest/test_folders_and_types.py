@@ -106,3 +106,14 @@ def load_one(folder, path):
     write_csv(m, [row(doc_id="old-deck", path=path.name, category="functional")])
     (doc,) = load_manifest(m, folder)
     return doc
+
+
+def test_scan_goes_into_every_subfolder_and_skips_office_lock_files(tmp_path):
+    """Files at any depth are drafted; '~$' owner files of open documents are not."""
+    deep = tmp_path / "new" / "a" / "b" / "c"
+    deep.mkdir(parents=True)
+    (tmp_path / "new" / "top.pdf").write_bytes(b"1")
+    (deep / "deep.pptx").write_bytes(b"2")
+    (deep / "~$deep.pptx").write_bytes(b"3")
+    rows = scan_folder(tmp_path / "m.csv", tmp_path, lambda p: p.name, folder=tmp_path / "new").rows
+    assert sorted(Path(r["path"]).name for r in rows) == ["deep.pptx", "top.pdf"]

@@ -27,6 +27,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from kb.answer.cache import AnswerCache
+from kb.answer.explain import check_faithfulness, explain_trace
 from kb.api import sessions
 from kb.api.chat import stream_turn
 from kb.api.health import check_health
@@ -216,6 +217,29 @@ def create_app(services: Services | None = None) -> FastAPI:
         if body.rating < 0:     # a bad answer is not served from the cache again
             AnswerCache(conn).forget_trace(body.trace_id)
         return saved
+
+    def own_trace(conn: sqlite3.Connection, trace_id: str, user: User) -> None:
+        """404 unless the trace exists and belongs to the user (another user's answer is not shown)."""
+        row = conn.execute("SELECT user_id FROM traces WHERE trace_id = ?", (trace_id,)).fetchone()
+        if row is None or row["user_id"] != user.user_id:
+            raise HTTPException(status_code=404, detail="answer not found")
+
+    @app.get("/api/traces/{trace_id}")
+    def trace_view(trace_id: str, user: CurrentUser, conn: Db) -> dict:
+        """Behind the scenes of one of the user's answers: candidates and scores, gate, context, prompt, checks."""
+        own_trace(conn, trace_id, user)
+        return explain_trace(conn, trace_id)
+
+    @app.post("/api/traces/{trace_id}/faithfulness")
+    def trace_faithfulness(trace_id: str, svc: Svc, user: CurrentUser, conn: Db, force: bool = False) -> dict:
+        """Judge one of the user's answers against its context (on demand: one more LLM call, 20-60 s); the
+        result is stored with the trace. Waits for a running chat turn (the same model lock)."""
+        own_trace(conn, trace_id, user)
+        with svc.model_lock:
+            try:
+                return check_faithfulness(conn, svc.current_models(), trace_id, force=force)
+            except ValueError as e:
+                raise HTTPException(status_code=409, detail=str(e)) from e
 
     @app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
     def ui() -> FileResponse:

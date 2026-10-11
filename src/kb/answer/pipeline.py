@@ -28,6 +28,7 @@ from kb.agent.compare import (
 from kb.agent.route import ANSWER, COMPARE, Route, route_question
 from kb.agent.tools import KBTools
 from kb.answer.cache import AnswerCache, CachedAnswer, CacheKey, cache_key
+from kb.answer.records import messages_hash, unit_record
 from kb.core.tracing import Tracer
 from kb.llm.prompts import (
     NOT_FOUND,
@@ -398,6 +399,9 @@ class Answerer:
                                       sides=bool(answer.sides))
                 messages = build_messages(answer.question, context, answer.sides)
                 stage["prompt_chars"] = sum(len(m["content"]) for m in messages)
+                # what this model is given, so the exact prompt can be rebuilt and judged later (kb trace)
+                stage.update(question=answer.question, sides=list(answer.sides or []),
+                             context=[unit_record(u) for u in context], prompt_sha=messages_hash(messages))
                 try:
                     generation = self.models.provider(profile.name).generate(messages, on_token=on_token)
                     break

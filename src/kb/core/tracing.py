@@ -109,3 +109,13 @@ class Tracer:
         """Write the trace, recording the exception if the block raised (which is then re-raised)."""
         self.finish(f"{exc_type.__name__}: {exc}" if exc_type else None)
         # returning None re-raises any exception
+
+
+def append_stage(conn: sqlite3.Connection, trace_id: str, name: str, duration_ms: float, data: dict[str, Any]) -> None:
+    """Add a stage to a trace that is already written (e.g. a faithfulness check run later, on demand),
+    numbered after its last stage."""
+    with conn:
+        seq = conn.execute("SELECT COALESCE(MAX(seq), 0) + 1 FROM trace_stages WHERE trace_id = ?",
+                           (trace_id,)).fetchone()[0]
+        conn.execute("INSERT INTO trace_stages (trace_id, seq, stage, duration_ms, data) VALUES (?, ?, ?, ?, ?)",
+                     (trace_id, seq, name, duration_ms, _to_json(data)))

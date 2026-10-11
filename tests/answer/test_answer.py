@@ -123,6 +123,23 @@ def test_source_line_names_same_text_copies():
     assert "MSSQL" not in build_messages("q", [u])[1]["content"]       # the LLM sees the text once, unchanged
 
 
+def test_word_files_are_cited_without_a_page_and_decks_by_slide():
+    """TD-27: a Word file has no fixed pages, so no 'p. 1'; a deck says 'slide', once."""
+    docx = unit("smtp", "3", (1, 1))
+    docx.doc_type, docx.heading_path = "docx", "3 Relay settings"
+    deck = unit("aio", "237", (237, 269))
+    deck.doc_type, deck.heading_path = "pptx", "Slides 237-269: 13. Installing 3DSpace"
+    assert source_line(1, docx) == "[1] SMTP (R2026x), Section 3 Relay settings"
+    assert docx.citation == "SMTP, Section 3"
+    assert source_line(2, deck) == "[2] AIO (R2026x), Slides 237-269: 13. Installing 3DSpace"
+    assert deck.citation == "AIO, slides 237-269"
+    docx.same_text = [SameText("deck", "DECK", "deck#5", "5", 5, 5, "R2026x", "pptx")]
+    assert source_line(1, docx).endswith(" · same text: DECK (R2026x), slide 5")
+    content = build_messages("q", [docx, deck])[1]["content"]
+    assert "[1] SMTP (applies to R2026x) | Section 3 Relay settings\n" in content
+    assert "[2] AIO (applies to R2026x) | Slides 237-269: 13. Installing 3DSpace\n" in content
+
+
 # ------------------------------------------------------------------------------------------- gate
 
 def test_gate_low_score_no_context_and_unreranked():

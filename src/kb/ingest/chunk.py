@@ -27,7 +27,7 @@ from kb.ingest.manifest import Document
 from kb.ingest.structure import Block, Section, Structure
 
 # Bump when chunking rules change; stored per document so stale chunks can be detected.
-CHUNKER_VERSION = 1
+CHUNKER_VERSION = 2       # 2: slides without a title placeholder titled by their first line (Phase 8)
 
 TARGET_TOKENS = 256        # body tokens per chunk (the header comes on top)
 MAX_ATOMIC_TOKENS = 512    # tables / code up to this size are never split

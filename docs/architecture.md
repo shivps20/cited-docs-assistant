@@ -7,7 +7,8 @@ How a question is answered, from the document manifest to a cited answer. For co
 ```
 Ingestion (offline)                         Query (per request)
 -------------------                         -------------------
-documents + manifest                        question
+source folders -> manifest (scan, review,   question
+  validate with warnings)
   -> Docling parse                            -> condense follow-up; asked before? answer from the cache
                                               -> route (comparison: one search per side)
   -> structure-aware chunks                   -> hybrid search in Qdrant (dense + sparse, RRF)
@@ -17,6 +18,16 @@ documents + manifest                        question
 ```
 
 Every query is traced stage by stage into SQLite, and a golden question set (`eval/golden.json`, local; example in [eval/golden.example.json](../eval/golden.example.json)) measures retrieval and answer quality.
+
+## Ingestion
+
+1. **Manifest:** `kb manifest scan [--folder PATH]` drafts one row per new file (any folder, read in place; one format kept per document); the owner reviews access and the review notes; `kb manifest validate` checks every row and warns about likely mistakes (one document in two formats, the same file in several folders, internal documents open to everyone, a latest version with an older release, editions in different families).
+2. **`kb ingest`** runs the three steps below for every document that needs them and skips what is up to date; a failed document is left out of the later steps and logged (`--retry-failed`).
+3. **Parse:** Docling (layout and tables on the GPU, OCR off) in a worker process replaced every 50 documents; the result is cached as JSON per document version in `data/parsed/`.
+4. **Structure and chunks:** the section tree is rebuilt in memory from the cache (table of contents, numbering, page furniture removed; one section per slide in decks, titled by the first line when a slide has no title placeholder) and stored as sections and ~256-token chunks in SQLite.
+5. **Index:** bge-m3 dense and sparse vectors with the manifest metadata into Qdrant; a manifest-only change updates the metadata in place.
+
+Each document's progress is its `status` in SQLite (`parsed`, `chunked`, `indexed`, or `failed` when the parse failed; a chunk or index error keeps the last good status and records the error), shown by `kb status`.
 
 ## Retrieval
 
@@ -54,7 +65,7 @@ uv run kb ask "..." --groups internal --release R2025x --show-context
 `kb ask` runs retrieval, then:
 
 1. **Gate:** if nothing was found, or the best rerank score is below `KB_NOT_FOUND_SCORE` (0.1), it replies "not found" without calling the LLM. The value is calibrated with `kb calibrate` ([evaluation.md](evaluation.md#kb-calibrate--the-not-found-threshold)): 0.1 sits midway between the unanswerable questions the gate can catch and the lowest-scoring answered one; most unanswerable questions score as high as answerable ones, so the prompt's refusal rule (below) does the rest.
-2. **Prompt:** the context goes to the LLM as numbered sources (document, release, section, pages). The rules: answer only from the sources, cite `[n]` after every statement, copy article numbers, URLs, commands and queries exactly, give procedures as numbered steps, and reply with a fixed "not found" sentence when the sources do not contain the answer (this catches on-topic near misses that the gate lets through). A "not found" from the model is asked once more with only the best 3 sources (2 per side for a comparison): the small model sometimes gives up when the answering section sits among several partly related ones. A second refusal stands (`KB_REFUSAL_RETRY=false` switches this off).
+2. **Prompt:** the context goes to the LLM as numbered sources (document, release, section, and the pages of a PDF or the slides of a deck; Word files have no fixed pages, so none are given). The rules: answer only from the sources, cite `[n]` after every statement, copy article numbers, URLs, commands and queries exactly, give procedures as numbered steps, and reply with a fixed "not found" sentence when the sources do not contain the answer (this catches on-topic near misses that the gate lets through). A "not found" from the model is asked once more with only the best 3 sources (2 per side for a comparison): the small model sometimes gives up when the answering section sits among several partly related ones. A second refusal stands (`KB_REFUSAL_RETRY=false` switches this off).
 3. **Model:** chosen from the model catalogue (`config/models.yaml`, see [configuration.md](configuration.md)): the answer role's model, or the one a request names. The model registry (`kb.llm.registry`) tries it, then its fallbacks, then the catalogue's local fallback model. **Privacy policy:** an external model (OpenAI, Mistral, Gemini, Claude) only gets a context in which **every** source has `external_ok = true`; otherwise external models are skipped and the local model answers, with a notice saying why. Models whose key is not set are skipped the same way, and a model that fails or refuses hands over to the next one. Without `models.yaml`: Ollama (`LLM_MODEL`), plus OpenAI when `OPENAI_API_KEY` and `OPENAI_MODEL` are set (`KB_LLM_PROVIDER=auto`).
 4. **Citations:** `[n]` markers that do not match a source are removed; the **Sources** list under the answer is built from the cited numbers, never written by the LLM. Each source also shows its file: the full path by default, or (`KB_SOURCE_PATH=relative`) the path relative to `KB_DOCS_DIR`, with documents kept elsewhere shown by file name only.
 
@@ -67,6 +78,10 @@ uv run kb ask "..." --groups internal --release R2025x --show-context
 5. **Read more (per model, off by default):** runs only when the answer model's catalogue profile has `compare_read: true`; with qwen2.5 7B it did not improve answers (TO-5.10), so the example catalogue leaves it off everywhere. When on: when the gate passes, the local LLM sees each side's best guide as a table of contents (section numbers and headings; sections already in the context are marked) and picks up to 2 more sections per side (JSON). The server reads them, with the same access check as search (user's groups, latest edition only), and appends them, at most 1,500 tokens together; a long section is read as its first chunks. The model only sees outlines of documents the search already returned for that user. One extra LLM call per comparison (~3–6 s).
 
 The gate, provider choice and citation checks are the same; the trace has `route = 'compare'` with a `decompose` stage and one set of search stages per side. `--no-compare` answers comparisons with one search (to compare the two paths).
+
+### Behind the scenes of an answer
+
+Each answer's trace keeps every search candidate with its retrieval score, the reranked top 20 with their scores, the gate decision, the context units the model was given (from which the exact prompt is rebuilt), the model's usage, the citation and command checks, and the stage timings. The chat shows it under each answer (**Behind the scenes**), and `kb trace` prints it; the faithfulness judge runs on demand (one more LLM call) and its verdict is kept with the trace. Only the user who asked can open an answer's details.
 
 ### Answer cache
 

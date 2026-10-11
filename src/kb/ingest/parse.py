@@ -89,6 +89,16 @@ def find_cached(doc_id: str) -> Path | None:
     return matches[-1] if matches else None
 
 
+def parse_up_to_date(conn: sqlite3.Connection, doc: Document) -> bool:
+    """Can `kb ingest` skip parsing this document? Yes when its row records a successful parse of the current
+    file (same hash) and that parse is in the cache: then not even the cached JSON needs loading."""
+    row = conn.execute("SELECT status, file_hash FROM documents WHERE doc_id = ?", (doc.doc_id,)).fetchone()
+    if row is None or row["status"] not in ("parsed", "chunked", "indexed") or not row["file_hash"]:
+        return False
+    file_hash = file_sha256(doc.path)
+    return row["file_hash"] == file_hash and cache_path(doc.doc_id, file_hash).exists()
+
+
 def build_converter():
     """Docling converter: layout + table structure on GPU when available, OCR off."""
     import torch
@@ -203,6 +213,28 @@ def parse_document(doc: Document, converter, *, force: bool = False) -> tuple[Do
 
 
 STAT_COLUMNS = ("text_items", "headings", "tables", "pictures", "empty_pages", "furniture")
+
+
+# ---------------------------------------------------------------------------- parsing in a worker process
+
+PARSE_DOCS_PER_WORKER = 50        # a fresh worker (and fresh threads) after this many documents (kb.core.workers)
+PARSE_TIMEOUT_S = 1800            # a document still parsing after 30 min is stopped and marked failed
+_worker_converter = None          # the Docling converter of this worker process
+
+
+def init_parse_worker() -> None:
+    """Runs once in each parse worker: quiet Docling's logging and load the converter (models on the GPU)."""
+    global _worker_converter
+    logging.getLogger("docling").setLevel(logging.WARNING)
+    _worker_converter = build_converter()
+
+
+def parse_in_worker(job: tuple[Document, bool]) -> tuple[ParseStats, str]:
+    """Parse one document in the worker (job = (doc, force)); the result goes to the parse cache, so only
+    the statistics and the file hash travel back to the main process."""
+    doc, force = job
+    _, stats, file_hash = parse_document(doc, _worker_converter, force=force)
+    return stats, file_hash
 
 
 def record_document(conn: sqlite3.Connection, doc: Document, *, status: str, file_hash: str | None = None,

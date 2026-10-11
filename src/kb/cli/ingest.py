@@ -3,6 +3,7 @@
 import sys
 
 from kb.core.config import get_settings
+from kb.ingest.failures import Failure
 from kb.ingest.manifest import (
     ManifestError,
     append_rows,
@@ -41,6 +42,7 @@ def manifest_validate() -> int:
         docs = load_manifest(s.manifest_path, s.docs_dir)
     except ManifestError as e:
         print(e)
+        _print_warnings(s.manifest_path)
         return 1
 
     print(f"{'doc_id':<32} {'type':<5} {'ver':<5} {'latest':<6} {'release':<14} {'groups':<14} {'ext':<5} category")
@@ -56,8 +58,30 @@ def manifest_validate() -> int:
         print(f"\n{len(to_review)} row(s) marked for review (review column), e.g.:")
         for d in to_review[:10]:
             print(f"  {d.doc_id}: {d.review}")
-    print(f"\nok: {len(docs)} documents, {len(unlisted)} unlisted, {len(to_review)} to review")
+    warned = _print_warnings(s.manifest_path)
+    no_release = sum(1 for d in docs if d.release_label == 'any')
+    print(f"\nok: {len(docs)} documents, {len(unlisted)} unlisted, {len(to_review)} to review, {warned} warning(s), "
+          f"{no_release} without a release")
     return 0
+
+
+def _print_warnings(manifest_path) -> int:
+    """Print the manifest warnings (manifest_warnings) grouped by kind; returns how many there are."""
+    from kb.ingest.manifest import manifest_warnings
+
+    titles = {"access": "open to all but marked internal / confidential / restricted",
+              "editions": "likely editions of one document in different families",
+              "other-format": "one document in two formats",
+              "releases": "the latest version has an older release than an earlier one",
+              "same-name": "the same file name in several folders"}
+    warnings = manifest_warnings(read_rows(manifest_path))
+    kind = None
+    for w in warnings:
+        if w.kind != kind:
+            kind = w.kind
+            print(f"\nWARN {titles[kind]} ({sum(x.kind == kind for x in warnings)}):")
+        print(f"  line {', '.join(map(str, w.lines))}: {w.message}")
+    return len(warnings)
 
 
 def manifest_scan(dry_run: bool = False, folder: str | None = None) -> int:
@@ -85,9 +109,12 @@ def manifest_scan(dry_run: bool = False, folder: str | None = None) -> int:
                          today=datetime.datetime.now().astimezone().date().isoformat(), cover_text=cover_text,
                          folder=root)
     print(f"supported files ({s.doc_types}): {report.supported} · in the manifest: {report.listed} · "
-          f"new: {len(report.rows)} · duplicates skipped: {len(report.duplicates)}")
+          f"new: {len(report.rows)} · duplicates skipped: {len(report.duplicates)} · "
+          f"other formats skipped: {len(report.other_formats)}")
     for rel, original in report.duplicates:
         print(f"SKIP {rel}: same content as {original}")
+    for rel, kept in report.other_formats:
+        print(f"SKIP {rel}: the same document in another format is kept: {kept}")
     if not report.rows:
         print("no new files to draft")
         return 0
@@ -102,7 +129,12 @@ def manifest_scan(dry_run: bool = False, folder: str | None = None) -> int:
     if dry_run:
         print(f"\ndry run: {len(report.rows)} draft rows not written; run without --dry-run to append them")
         return 0
-    append_rows(s.manifest_path, report.rows)
+    try:
+        append_rows(s.manifest_path, report.rows)
+    except PermissionError:
+        print(f"{s.manifest_path.name} is locked (open in Excel?); nothing written. Close it and run the "
+              "command again.")
+        return 1
     print(f"\nappended {len(report.rows)} draft rows to {s.manifest_path.name}.")
     print("REVIEW BEFORE kb index: drafted rows give access to everyone (allowed_groups=all) and keep "
           "external_ok=false; check allowed_groups, external_ok and every note in the review column (guessed "
@@ -150,7 +182,12 @@ def manifest_backfill(write: bool = False) -> int:
         return 0
     backup = s.db_path.parent / f"manifest.backup-{datetime.datetime.now().astimezone():%Y%m%d-%H%M%S}.csv"
     shutil.copy2(s.manifest_path, backup)
-    write_rows(s.manifest_path, rows)
+    try:
+        write_rows(s.manifest_path, rows)
+    except PermissionError:
+        print(f"{s.manifest_path.name} is locked (open in Excel?); nothing written. Close it and run the "
+              "command again.")
+        return 1
     print(f"written {s.manifest_path.name} (backup: {backup}). Next: `kb manifest validate`, then `kb index` "
           "(release changes update the stored metadata in place, no re-embedding).")
     return 0
@@ -186,39 +223,47 @@ def _structure_for(doc):
 
 def parse_documents(doc_ids: list[str] | None, force: bool) -> int:
     """`kb parse`: parse new or changed documents with Docling (cached) and record their statistics."""
-    import logging
-
     from kb.core.db import connect
-    from kb.ingest.parse import build_converter, parse_document, record_document
 
-    logging.getLogger("docling").setLevel(logging.WARNING)
-    s = get_settings()
-    try:
-        docs = load_manifest(s.manifest_path, s.docs_dir)
-    except ManifestError as e:
-        print(e)
+    docs = _manifest_docs(doc_ids)
+    if docs is None:
         return 1
-    if doc_ids:
-        unknown = set(doc_ids) - {d.doc_id for d in docs}
-        if unknown:
-            print(f"unknown doc_id(s): {', '.join(sorted(unknown))}")
-            return 1
-        docs = [d for d in docs if d.doc_id in doc_ids]
-
     conn = connect()
-    converter = build_converter()
+    failures = _parse_step(conn, docs, force)
+    conn.close()
+    print(f"\n{len(docs) - len(failures)} parsed, {len(failures)} failed; cache: {get_settings().parsed_dir}")
+    return 1 if failures else 0
+
+
+def _parse_step(conn, docs, force: bool) -> list[Failure]:
+    """Parse `docs` (cache hits are cheap), print one line each and return the documents that failed.
+
+    Parsing runs in a worker process replaced every PARSE_DOCS_PER_WORKER documents (kb.core.workers): Docling
+    leaves threads behind per document, and a worker that crashes or hangs only fails that one document."""
+    from kb.core.workers import run_isolated
+    from kb.ingest.parse import (
+        PARSE_DOCS_PER_WORKER,
+        PARSE_TIMEOUT_S,
+        init_parse_worker,
+        parse_in_worker,
+        record_document,
+    )
+
     header = f"{'doc_id':<44} {'type':<5} {'pages':>5} {'sec':>7} {'s/pg':>5} {'texts':>6} {'heads':>5} " \
              f"{'tables':>6} {'pics':>5} {'empty':>5} {'furn':>5}"
     print(header, flush=True)
-    failed = stalled = 0
-    for doc in docs:
-        try:
-            _, st, file_hash = parse_document(doc, converter, force=force)
-        except Exception as e:  # noqa: BLE001 - record the failure and continue with the next document
-            failed += 1
-            record_document(conn, doc, status="failed", error=f"{type(e).__name__}: {e}")
-            print(f"{doc.doc_id:<44} FAILED {type(e).__name__}: {e}", flush=True)
+    failures: list[Failure] = []
+    stalled = 0
+    jobs = ((doc, force) for doc in docs)
+    for (doc, _), result, e in run_isolated(jobs, parse_in_worker, initializer=init_parse_worker,
+                                            per_worker=PARSE_DOCS_PER_WORKER, timeout=PARSE_TIMEOUT_S):
+        if e is not None:    # record the failure and continue with the next document
+            error = f"parse: {type(e).__name__}: {e}"
+            failures.append(Failure("parse", doc.doc_id, error))
+            record_document(conn, doc, status="failed", error=error)
+            print(f"{doc.doc_id:<44} FAILED {error}", flush=True)
             continue
+        st, file_hash = result
         record_document(conn, doc, status="parsed", file_hash=file_hash, stats=st)
         seconds = "cached" if st.cached else f"{st.seconds:.1f}"
         print(f"{doc.doc_id:<44} {doc.doc_type:<5} {st.pages:>5} {seconds:>7} {st.seconds_per_page:>5.2f} "
@@ -227,13 +272,11 @@ def parse_documents(doc_ids: list[str] | None, force: bool) -> int:
         if st.stalled:
             stalled += 1
             print(f"  WARN {st.seconds:.0f} s for {st.pages} pages but only {st.cpu_seconds:.0f} s of CPU: the machine "
-                  f"slept or was throttled (keep it plugged in, lid open); re-parse with --doc {doc.doc_id} --force "
+                  f"slept or was throttled, or the process was paused (keep it plugged in, lid open); re-parse with --doc {doc.doc_id} --force "
                   f"to record the real time", flush=True)
-    conn.close()
-    print(f"\n{len(docs) - failed} parsed, {failed} failed; cache: {s.parsed_dir}")
     if stalled:
         print(f"WARN {stalled} document(s) stalled: their parse times include time the machine was asleep or throttled")
-    return 1 if failed else 0
+    return failures
 
 
 def show_status() -> int:
@@ -283,7 +326,23 @@ def show_status() -> int:
     seconds = sum(r["parse_seconds"] or 0 for r in rows.values())
     summary = ", ".join(f"{n} {status}" for status, n in sorted(by_status.items()))
     print(f"\n{len(rows) + pending} documents: {summary}; {pages} pages parsed in {seconds:.0f} s")
+    _print_latest_run(s.failure_log)
     return 0
+
+
+def _print_latest_run(log) -> None:
+    """One line about the latest `kb ingest` run and its failures, if any run is logged."""
+    from kb.ingest.failures import STEPS, latest_run
+
+    run, failures = latest_run(log)
+    if run is None:
+        return
+    if not failures:
+        print(f"latest kb ingest run {run}: no failures")
+        return
+    per_step = ", ".join(f"{step} {n}" for step in STEPS if (n := sum(f.step == step for f in failures)))
+    print(f"latest kb ingest run {run}: {len(failures)} failed ({per_step}); see {log}, "
+          f"then `uv run kb ingest --retry-failed`")
 
 
 def inspect_document(doc_id: str, section_number: str | None, details: bool) -> int:
@@ -387,6 +446,21 @@ def chunk_documents(doc_ids: list[str] | None, force: bool = False) -> int:
     Documents already chunked from the same parse, chunker version, title and release are skipped (so
     `kb index` only embeds what changed); --force rebuilds them too (after code or domain.yaml changes)."""
     from kb.core.db import connect
+
+    docs = _manifest_docs(doc_ids)
+    if docs is None:
+        return 1
+    conn = connect()
+    failures, done, skipped, total = _chunk_step(conn, docs, force)
+    conn.close()
+    if done or failures:
+        print(f"\n{done} documents chunked, {len(failures)} failed/skipped, {skipped} up to date "
+              f"(--force rebuilds those); {total} chunks stored")
+    return 1 if failures else 0
+
+
+def _chunk_step(conn, docs, force: bool) -> tuple[list[Failure], int, int, int]:
+    """Chunk the documents that need it; returns (failures, documents chunked, skipped as up to date, chunks)."""
     from kb.ingest.chunk import (
         bge_m3_token_counter,
         chunk_document,
@@ -394,44 +468,40 @@ def chunk_documents(doc_ids: list[str] | None, force: bool = False) -> int:
         store_document,
     )
 
-    docs = _manifest_docs(doc_ids)
-    if docs is None:
-        return 1
-    conn = connect()
     skipped = 0
     if not force:
         todo = [d for d in docs if not chunks_up_to_date(conn, d)]
         skipped, docs = len(docs) - len(todo), todo
     if not docs:
         print(f"nothing to chunk: {skipped} documents up to date (use --force to rebuild them)")
-        conn.close()
-        return 0
+        return [], 0, skipped, 0
     count = bge_m3_token_counter()
     print(f"{'doc_id':<44} {'sections':>8} {'chunks':>6} {'avg tok':>7} {'max tok':>7} "
           f"{'tables':>6} {'code':>5} {'mixed':>5}")
-    failed = total = 0
+    failures: list[Failure] = []
+    total = 0
     for doc in docs:
-        structure = _structure_for(doc)
-        if structure is None:
-            print(f"{doc.doc_id:<44} SKIPPED not parsed; run `uv run kb parse --doc {doc.doc_id}`")
-            failed += 1
-            continue
         try:
+            structure = _structure_for(doc)
+            if structure is None:
+                failures.append(Failure("chunk", doc.doc_id, "not parsed"))
+                print(f"{doc.doc_id:<44} SKIPPED not parsed; run `uv run kb parse --doc {doc.doc_id}`")
+                continue
             chunks = chunk_document(doc, structure, count)
             store_document(conn, doc, structure, chunks, count)
         except Exception as e:  # noqa: BLE001 - report and continue with the next document
+            error = f"chunk: {type(e).__name__}: {e}"
+            failures.append(Failure("chunk", doc.doc_id, error))
+            with conn:      # the status stays 'parsed' (the parse is fine); the error says which step failed
+                conn.execute("UPDATE documents SET error = ? WHERE doc_id = ?", (error, doc.doc_id))
             print(f"{doc.doc_id:<44} FAILED {type(e).__name__}: {e}")
-            failed += 1
             continue
         total += len(chunks)
         tokens = [c.token_count for c in chunks] or [0]
         kinds = [c.content_type for c in chunks]
         print(f"{doc.doc_id:<44} {len(structure.sections):>8} {len(chunks):>6} {sum(tokens) // len(tokens):>7} "
               f"{max(tokens):>7} {kinds.count('table'):>6} {kinds.count('code'):>5} {kinds.count('mixed'):>5}")
-    conn.close()
-    print(f"\n{len(docs) - failed} documents chunked, {failed} failed/skipped, {skipped} up to date "
-          f"(--force rebuilds those); {total} chunks stored")
-    return 1 if failed else 0
+    return failures, len(docs) - len(failures), skipped, total
 
 
 def show_coverage(show_all: bool) -> int:
@@ -475,20 +545,32 @@ def _warn_if_ollama_holds_gpu() -> None:
 def index_documents(doc_ids: list[str] | None, force: bool, prune: bool) -> int:
     """`kb index`: embed and upsert (re)chunked documents, update changed metadata, optionally prune."""
     from kb.core.db import connect
-    from kb.ingest.index import index_document, prune_removed
-    from kb.store.embed import BgeM3Embedder
-    from kb.store.vectorstore import get_client
 
-    s = get_settings()
     all_docs = _manifest_docs()
     docs = _manifest_docs(doc_ids)
     if docs is None or all_docs is None:
         return 1
     conn = connect()
+    failures = _index_step(conn, docs, all_docs, force, prune)
+    conn.close()
+    if failures is None:
+        return 1
+    print(f"\n{len(docs) - len(failures)} ok, {len(failures)} failed")
+    return 1 if failures else 0
+
+
+def _index_step(conn, docs, all_docs, force: bool, prune: bool) -> list[Failure] | None:
+    """Embed and upsert `docs` (bge-m3 loaded only when something needs embedding); returns the documents that
+    failed, or None when the collection is missing."""
+    from kb.ingest.index import index_document, prune_removed
+    from kb.store.embed import BgeM3Embedder
+    from kb.store.vectorstore import get_client
+
+    s = get_settings()
     client = get_client()
     if not client.collection_exists(s.qdrant_collection):
         print(f"collection '{s.qdrant_collection}' missing; run `uv run python scripts/init_qdrant.py`")
-        return 1
+        return None
 
     embedder = None
 
@@ -507,22 +589,132 @@ def index_documents(doc_ids: list[str] | None, force: bool, prune: bool) -> int:
             print(f"pruned {doc_id} (no longer in manifest)")
 
     print(f"{'doc_id':<44} {'action':<11} {'chunks':>6} {'embed s':>7} {'chunk/s':>7} {'upsert s':>8}  detail")
-    failed = 0
+    failures: list[Failure] = []
     for doc in docs:
         try:
             r = index_document(conn, client, s.qdrant_collection, doc, get_embedder, force=force)
         except Exception as e:  # noqa: BLE001 - record the failure and continue with the next document
-            failed += 1
+            error = f"index: {type(e).__name__}: {e}"
+            failures.append(Failure("index", doc.doc_id, error))
             with conn:
-                conn.execute("UPDATE documents SET error = ? WHERE doc_id = ?", (f"{type(e).__name__}: {e}", doc.doc_id))
-            print(f"{doc.doc_id:<44} FAILED      {type(e).__name__}: {e}", flush=True)
+                conn.execute("UPDATE documents SET error = ? WHERE doc_id = ?", (error, doc.doc_id))
+            print(f"{doc.doc_id:<44} FAILED      {error}", flush=True)
             continue
+        if r.action == "not_chunked":
+            failures.append(Failure("index", doc.doc_id, r.detail))
         rate = f"{r.chunks / r.embed_seconds:.1f}" if r.embed_seconds else "-"
         timing = f"{r.embed_seconds:>7.1f} {rate:>7} {r.upsert_seconds:>8.1f}" if r.action == "indexed" \
             else f"{'-':>7} {'-':>7} {'-':>8}"
         print(f"{doc.doc_id:<44} {r.action:<11} {r.chunks:>6} {timing}  {r.detail}", flush=True)
+    print(f"collection '{s.qdrant_collection}' holds {client.count(s.qdrant_collection, exact=True).count} points")
+    return failures
 
-    total = client.count(s.qdrant_collection, exact=True).count
+
+def _free_gpu() -> None:
+    """Release GPU memory held by the parser before bge-m3 loads (the 6 GB GPU cannot hold both)."""
+    import gc
+
+    gc.collect()
+    try:
+        import torch
+    except ImportError:
+        return
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def ingest_documents(doc_ids: list[str] | None, folder: str | None, retry_failed: bool, dry_run: bool) -> int:
+    """`kb ingest`: parse -> chunk -> index every document that needs it, in one run.
+
+    Each step skips what is up to date (parse: same file and cached; chunk: chunks_up_to_date; index: already
+    indexed, metadata changes applied in place), so running it again continues where an interrupted run stopped.
+    A document that fails a step is left out of the later steps and logged to KB_FAILURE_LOG; --retry-failed
+    runs only the documents that failed in the latest run. Use `kb chunk --force` / `kb index --force` for
+    rebuilds after code changes."""
+    import time
+    from pathlib import Path
+
+    from kb.core.db import connect
+    from kb.ingest.chunk import chunks_up_to_date
+    from kb.ingest.failures import append_failures, latest_run, new_run_id
+    from kb.ingest.parse import parse_up_to_date
+
+    s = get_settings()
+    all_docs = _manifest_docs()
+    if all_docs is None:
+        return 1
+    if retry_failed:
+        run, failed = latest_run(s.failure_log)
+        if not failed:
+            print(f"no failures in the latest run ({run or 'none logged'}); nothing to retry")
+            return 0
+        listed = {d.doc_id for d in all_docs}
+        gone = sorted({f.doc_id for f in failed} - listed)
+        if gone:
+            print(f"no longer in the manifest, not retried: {', '.join(gone)}")
+        doc_ids = sorted({f.doc_id for f in failed} & listed | set(doc_ids or []))
+        print(f"retrying {len(doc_ids)} document(s) that failed in run {run}")
+    docs = _manifest_docs(doc_ids) if doc_ids else all_docs
+    if docs is None:
+        return 1
+    if folder:
+        root = Path(folder).resolve()
+        docs = [d for d in docs if d.path.is_relative_to(root)]
+        if not docs:
+            print(f"no manifest documents under {root}; draft rows first with `uv run kb manifest scan --folder`")
+            return 1
+
+    conn = connect()
+    to_parse = [d for d in docs if not parse_up_to_date(conn, d)]
+    parse_ids = {d.doc_id for d in to_parse}
+    to_chunk = [d for d in docs if d.doc_id in parse_ids or not chunks_up_to_date(conn, d)]
+    indexed = {r["doc_id"] for r in conn.execute("SELECT doc_id FROM documents WHERE status = 'indexed'")}
+    chunk_ids = {d.doc_id for d in to_chunk}
+    to_embed = [d for d in docs if d.doc_id in chunk_ids or d.doc_id not in indexed]
+    print(f"{len(docs)} documents: {len(to_parse)} to parse, {len(to_chunk)} to chunk, {len(to_embed)} to embed; "
+          f"the rest up to date (metadata changes are applied in place)")
+    if dry_run:
+        for d in to_embed:
+            steps = ["parse"] * (d.doc_id in parse_ids) + ["chunk"] * (d.doc_id in chunk_ids) + ["embed"]
+            print(f"  {d.doc_id:<44} {' + '.join(steps)}")
+        conn.close()
+        return 0
+
+    run, start, failures = new_run_id(), time.perf_counter(), []
+    timings: dict[str, float] = {}
+
+    def remaining(step_docs):
+        """The documents that have not failed an earlier step."""
+        failed_ids = {f.doc_id for f in failures}
+        return [d for d in step_docs if d.doc_id not in failed_ids]
+
+    if to_parse:
+        print("\n== parse", flush=True)
+        t = time.perf_counter()
+        failures += _parse_step(conn, to_parse, force=False)
+        timings["parse"] = time.perf_counter() - t
+        _free_gpu()
+    print("\n== chunk", flush=True)
+    t = time.perf_counter()
+    failures += _chunk_step(conn, remaining(docs), force=False)[0]
+    timings["chunk"] = time.perf_counter() - t
+    print("\n== index", flush=True)
+    t = time.perf_counter()
+    index_failures = _index_step(conn, remaining(docs), all_docs, force=False, prune=False)
+    timings["index"] = time.perf_counter() - t
     conn.close()
-    print(f"\n{len(docs) - failed} ok, {failed} failed; collection '{s.qdrant_collection}' holds {total} points")
-    return 1 if failed else 0
+    if index_failures is None:
+        append_failures(s.failure_log, run, failures)
+        return 1
+    failures += index_failures
+    append_failures(s.failure_log, run, failures)
+
+    print(f"\nrun {run} finished in {(time.perf_counter() - start) / 60:.1f} min "
+          f"({', '.join(f'{k} {v / 60:.1f}' for k, v in timings.items())}); "
+          f"{len(docs) - len({f.doc_id for f in failures})} of {len(docs)} documents up to date")
+    if failures:
+        print(f"{len(failures)} failed (logged to {s.failure_log}):")
+        for f in failures:
+            print(f"  {f.step:<6} {f.doc_id:<44} {f.error[:120]}")
+        print("fix the cause, then `uv run kb ingest --retry-failed`")
+    return 1 if failures else 0

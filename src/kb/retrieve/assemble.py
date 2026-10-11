@@ -88,9 +88,27 @@ def fit_context(units: list["ContextUnit"], budget: ContextBudget, sides: bool =
     return kept
 
 
-def page_text(page_start: int, page_end: int) -> str:
-    """Page reference, e.g. 'p. 9' or 'pp. 9-10'."""
+def page_text(page_start: int, page_end: int, doc_type: str = "pdf") -> str:
+    """Where in the document: 'p. 9' / 'pp. 9-10' for a PDF, 'slide 9' / 'slides 9-10' for a deck, and ''
+    for a Word file, which has no fixed pages (its layout depends on the printer; Docling reports page 1, TD-27)."""
+    if doc_type == "docx":
+        return ""
+    if doc_type == "pptx":
+        return f"slide {page_start}" if page_start == page_end else f"slides {page_start}-{page_end}"
     return f"p. {page_start}" if page_start == page_end else f"pp. {page_start}-{page_end}"
+
+
+def citation_text(*parts: str) -> str:
+    """Citation parts joined with ', ', leaving out empty ones (a Word file's page reference)."""
+    return ", ".join(part for part in parts if part)
+
+
+def location_parts(section: str, pages: str, doc_type: str) -> tuple[str, ...]:
+    """Where a source is, for citations: ('Section 3.4', 'p. 8') for a PDF, ('Section 3.4',) for a Word file,
+    and only the slides for a deck, whose section number is its first slide ('Slide 4: Title' as heading)."""
+    if doc_type == "pptx":
+        return (section,) if section.lower().startswith("slide") else (pages,)
+    return (f"Section {section}", pages)
 
 
 @dataclass
@@ -103,16 +121,17 @@ class SameText:
     page_start: int
     page_end: int
     release: str = ""
+    doc_type: str = "pdf"        # pdf | pptx | docx: how the page reference reads
 
     @property
     def pages(self) -> str:
-        """Page reference, e.g. 'p. 9' or 'pp. 9-10'."""
-        return page_text(self.page_start, self.page_end)
+        """Page reference, e.g. 'p. 9', 'slides 4-6', or '' for a Word file (page_text)."""
+        return page_text(self.page_start, self.page_end, self.doc_type)
 
     @property
     def citation(self) -> str:
-        """Short citation, e.g. 'MSSQL Guide, Section 3.4, p. 8'."""
-        return f"{self.title}, Section {self.section_number}, {self.pages}"
+        """Short citation, e.g. 'MSSQL Guide, Section 3.4, p. 8' or 'Install Deck, slides 4-6'."""
+        return citation_text(self.title, *location_parts(self.section_number, self.pages, self.doc_type))
 
 
 @dataclass
@@ -137,11 +156,12 @@ class ContextUnit:
     same_text: list[SameText] = field(default_factory=list)   # near-identical copies in other documents
     side: str = ""                          # comparisons: the side this unit was found for
     source_path: str = ""                   # the document's file, as in the manifest (relative or absolute)
+    doc_type: str = "pdf"                   # pdf | pptx | docx: how the page reference reads
 
     @property
     def pages(self) -> str:
-        """Page reference, e.g. 'p. 9' or 'pp. 9-10'."""
-        return page_text(self.page_start, self.page_end)
+        """Page reference, e.g. 'p. 9', 'slides 4-6', or '' for a Word file (page_text)."""
+        return page_text(self.page_start, self.page_end, self.doc_type)
 
     @property
     def heading(self) -> str:
@@ -150,8 +170,8 @@ class ContextUnit:
 
     @property
     def citation(self) -> str:
-        """Short citation, e.g. 'SAML Guide, Section 2.2.3, pp. 9-10'."""
-        return f"{self.title}, Section {self.section_number}, {self.pages}"
+        """Short citation, e.g. 'SAML Guide, Section 2.2.3, pp. 9-10' or 'Install Deck, slides 4-6'."""
+        return citation_text(self.title, *location_parts(self.section_number, self.pages, self.doc_type))
 
 
 def _window(conn: sqlite3.Connection, section_id: str, lo: int, hi: int) -> tuple[str, int, int, int]:
@@ -194,7 +214,8 @@ def _add_same_text(unit: ContextUnit, c: Candidate, page_start: int, page_end: i
         return
     unit.same_text.append(SameText(doc_id=c.doc_id, title=c.title, section_id=c.section_id,
                                    section_number=c.section_number, page_start=page_start, page_end=page_end,
-                                   release=c.payload.get("release_label", "")))
+                                   release=c.payload.get("release_label", ""),
+                                   doc_type=c.payload.get("doc_type", "pdf")))
 
 
 def is_front_matter(c: Candidate) -> bool:
@@ -264,7 +285,7 @@ def assemble(conn: sqlite3.Connection, ranked: list[Candidate], *, max_units: in
             heading_path=section["heading_path"], header=c.header, page_start=p_start, page_end=p_end,
             text=text, kind=kind, score=c.best_score, tokens=tokens, chunk_ids=[c.chunk_id], window=window,
             release=c.payload.get("release_label", ""), external_ok=bool(c.payload.get("external_ok", False)),
-            source_path=paths[c.doc_id],
+            source_path=paths[c.doc_id], doc_type=c.payload.get("doc_type", "pdf"),
         ))
     return units
 
@@ -289,7 +310,7 @@ def merge_contexts(sides: list[tuple[str, list[ContextUnit]]], *, per_side: int 
             twin = next((u for u in merged if near_duplicate(u.text, unit.text)), None)
             if twin is not None:
                 copies = [SameText(unit.doc_id, unit.title, unit.section_id, unit.section_number,
-                                   unit.page_start, unit.page_end, unit.release), *unit.same_text]
+                                   unit.page_start, unit.page_end, unit.release, unit.doc_type), *unit.same_text]
                 for copy in copies:
                     if copy.doc_id != twin.doc_id and all(s.doc_id != copy.doc_id for s in twin.same_text):
                         twin.same_text.append(copy)

@@ -163,7 +163,8 @@ def test_pptx_one_section_per_slide():
         E("text", "Content on a slide without title", 5),
     ], doc_type="pptx", n_pages=5)
     assert [(s.number, s.title) for s in st.sections] == [
-        ("1", "Product Designer (PDS)"), ("4", "Key Functionality"), ("5", "Slide 5")]
+        ("1", "Product Designer (PDS)"), ("4", "Key Functionality"), ("5", "Content on a slide without title")]
+    assert [b.text for b in st.get("5").blocks] == ["Content on a slide without title"]   # its only line stays
     assert [b.text for b in st.get("4").blocks] == ["Feature A", "Sub point", "detail"]
     assert st.get("1").blocks[0].text == "- Functional Overview"
 
@@ -382,3 +383,24 @@ def test_pptx_chapter_title_repeated_over_slides_is_kept():
     s = build_structure(elements, doc_type="pptx", n_pages=6)
     assert [(sec.number, sec.title) for sec in s.sections] == [("2", "Guidelines"), ("3", "Storage Systems")]
     assert sum(1 for sec in s.sections[1:] for b in sec.blocks) == 4 and s.removed_lines == {footer: 6}
+
+
+def test_pptx_slides_without_title_placeholder_take_their_first_line():
+    """Titles typed in a text box: the first line titles the slide, consecutive slides of one chapter merge,
+    and lines that are commands, paths, URLs, code, sentences or a lowercase label keep "Slide N"."""
+    st = build_structure([
+        E("text", "13. Installing & Configuring 3DSpace", 3), E("text", "Preparation:", 3), E("text", "step a", 3),
+        E("text", "13. Installing & Configuring 3DSpace", 4), E("text", "step b", 4),
+        E("list", "Configuring the database:", 5), E("text", "create users", 5),
+        E("text", "[x3ds@host ~]$ ./StartInstall.sh", 6), E("text", "output", 6),
+        E("text", "https://host:443/3dswym/#home", 7), E("text", "page", 7),
+        E("text", "Click on Files for Microsoft Windows.", 8), E("text", "picture", 8),
+        E("text", "root", 9), E("text", "# useradd x3ds", 9),
+        E("text", "USE [master];", 10), E("text", "GO", 10),
+        E("text", "/app/DassaultSystemes/R2022x/3DSpace/logs", 11), E("text", "log", 11),
+    ], doc_type="pptx", n_pages=11)
+    assert [(s.number, s.page_start, s.page_end, s.title) for s in st.sections] == [
+        ("3", 3, 4, "13. Installing & Configuring 3DSpace"), ("5", 5, 5, "Configuring the database"),
+        ("6", 6, 6, "Slide 6"), ("7", 7, 7, "Slide 7"), ("8", 8, 8, "Slide 8"), ("9", 9, 9, "Slide 9"),
+        ("10", 10, 10, "Slide 10"), ("11", 11, 11, "Slide 11")]
+    assert [b.text for b in st.get("3").blocks] == ["Preparation:", "step a", "step b"]

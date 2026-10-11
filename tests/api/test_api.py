@@ -111,3 +111,20 @@ def test_session_endpoints_hide_other_users_sessions(client):
     assert client.get("/api/sessions").json()["sessions"] == []
     listed = client.get("/api/sessions", headers={"X-KB-User": "internal_user"}).json()["sessions"]
     assert [s["session_id"] for s in listed] == [sid] and listed[0]["title"] == "New conversation"
+
+
+def test_trace_view_is_only_for_the_user_who_asked(client, db_path):
+    """GET /api/traces/{id}: the owner sees the view; another user and unknown ids get 404."""
+    from kb.core.tracing import Tracer
+
+    conn = connect(db_path)
+    with Tracer(conn, "Which port?", user_id="internal_user") as t:
+        t.add_stage("gate", 0.01, threshold=0.1, decision="low_score", top_score=0.02)
+        t.set(gate_decision="low_score")
+    conn.close()
+    mine = client.get(f"/api/traces/{t.trace_id}", headers={"X-KB-User": "internal_user"})
+    assert mine.status_code == 200 and mine.json()["gate"]["decision"] == "low_score"
+    assert client.get(f"/api/traces/{t.trace_id}").status_code == 404                 # guest
+    assert client.get("/api/traces/unknown", headers={"X-KB-User": "internal_user"}).status_code == 404
+    judged = client.post(f"/api/traces/{t.trace_id}/faithfulness", headers={"X-KB-User": "internal_user"})
+    assert judged.status_code == 409 and "no stored context" in judged.json()["detail"]

@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     source_path: Literal["full", "relative"] = Field("full", validation_alias="KB_SOURCE_PATH")
     manifest_path: Path = Field(Path("config/manifest.csv"), validation_alias="KB_MANIFEST_PATH")
     parsed_dir: Path = Field(Path("data/parsed"), validation_alias="KB_PARSED_DIR")
+    # Documents that failed a step of `kb ingest`, one CSV row each (append-only; `kb ingest --retry-failed`)
+    failure_log: Path = Field(Path("data/logs/ingest_failures.csv"), validation_alias="KB_FAILURE_LOG")
     users_path: Path = Field(Path("config/users.yaml"), validation_alias="KB_USERS_PATH")
     # Organisation-specific text rules and the golden question set (both local, git-ignored)
     domain_path: Path = Field(Path("config/domain.yaml"), validation_alias="KB_DOMAIN_PATH")
@@ -90,7 +92,7 @@ class Settings(BaseSettings):
             raise ValueError(f"KB_DOC_TYPES: unsupported {', '.join(unknown) or '(empty)'}; choose from {', '.join(sorted(known))}")
         return ",".join(dict.fromkeys(types))
 
-    @field_validator("db_path", "docs_dir", "manifest_path", "parsed_dir", "users_path", "domain_path",
+    @field_validator("db_path", "docs_dir", "manifest_path", "parsed_dir", "failure_log", "users_path", "domain_path",
                      "golden_path", "models_path", "embed_model_path",
                      "rerank_model_path", "docling_artifacts_path")
     @classmethod

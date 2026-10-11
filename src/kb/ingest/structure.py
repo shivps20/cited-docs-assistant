@@ -15,7 +15,8 @@ stream into numbered sections that match the document's own numbering, so answer
 * Content before the first numbered section is section "0" (cover + executive summary).
 * Dropped: the TOC itself, "Document History" sections, page headers/footers that leaked
   into the body, and lines repeated on a large share of pages.
-* PPTX: one section per slide, titled by the slide title; agenda and disclaimer slides dropped.
+* PPTX: one section per slide, titled by the slide title (or its first line when it reads like a title);
+  agenda and disclaimer slides dropped.
 * Documents without a TOC (e.g. DOCX) fall back to accepting all headings.
 * Only the run of TOC pages near the start is the TOC; a table Docling labels as TOC later in the
   document is an ordinary table. A 'Contents' heading in the front matter drops only the TOC pages.
@@ -596,8 +597,38 @@ def build_structure(elements: list[Element], *, doc_type: str, n_pages: int,
     return Structure(sections, toc, unmatched, demoted, removed)
 
 
+# A slide's first line that is not a title: a command, a path, a URL, code, or a sentence.
+_NOT_A_TITLE = re.compile(r"://|[$#>]\s|[;={}<>\[\]]|^[/\\~%]|\\\\|\w/\w+/|[.,;!]$")
+MAX_SLIDE_TITLE_CHARS = 90
+MAX_SLIDE_TITLE_WORDS = 14
+
+
+def _clean_slide_title(text: str) -> str:
+    """A slide title without surrounding space or a trailing colon ('Preparation:' -> 'Preparation')."""
+    return text.strip().rstrip(":").strip()
+
+
+def _text_title(items: list[Element]) -> Element | None:
+    """For a slide without a recognised title (titles typed in a text box rather than the title placeholder):
+    its first text or list line, if it reads like a title: short, at least two words (or one capitalised word
+    of five letters or more), and not a command, path, URL, code line or sentence. None otherwise."""
+    first = next((e for e in items if e.kind in ("text", "list")), None)
+    if first is None:
+        return None
+    text = _clean_slide_title(first.text)
+    words = text.split()
+    if not 4 <= len(text) <= MAX_SLIDE_TITLE_CHARS or len(words) > MAX_SLIDE_TITLE_WORDS:
+        return None
+    if _NOT_A_TITLE.search(text) or not re.search(r"[A-Za-z]{3}", text):
+        return None
+    if len(words) == 1 and not (text[0].isupper() and len(text) >= 5):
+        return None
+    return first
+
+
 def _build_slides(elements: list[Element], removed: dict[str, int]) -> Structure:
-    """One section per slide (consecutive slides with the same title merge, '(n/m)' suffixes removed)."""
+    """One section per slide (consecutive slides with the same title merge, '(n/m)' suffixes removed); a slide
+    without a recognised title is titled by its first line when that reads like a title (_text_title)."""
     by_slide: dict[int, list[Element]] = defaultdict(list)
     for e in elements:
         by_slide[e.page].append(e)
@@ -607,8 +638,8 @@ def _build_slides(elements: list[Element], removed: dict[str, int]) -> Structure
     previous: tuple[str, int] | None = None         # (title key, slide) of the last kept slide
     for slide in sorted(by_slide):
         items = by_slide[slide]
-        title_el = next((e for e in items if e.kind == "heading"), None)
-        title = title_el.text.strip() if title_el else f"Slide {slide}"
+        title_el = next((e for e in items if e.kind == "heading"), None) or _text_title(items)
+        title = _clean_slide_title(title_el.text) if title_el else f"Slide {slide}"
         title = re.sub(r"\s*\(\d+\s*/\s*\d+\)$", "", title)   # "Key Functionality (1/2)" -> one section
         key = normalize_title(title)
         if key in DROP_SLIDE_TITLES:
@@ -617,8 +648,10 @@ def _build_slides(elements: list[Element], removed: dict[str, int]) -> Structure
         if not (title_el and previous and previous == (key, slide - 1)):
             b.start(str(slide), title, slide)
         previous = (key, slide)
+        # A first line used as the title stays in the text when it is all the slide holds, so nothing is lost.
+        keep_title = title_el is not None and title_el.kind != "heading" and len(items) == 1
         for e in items:
-            if e is title_el:
+            if e is title_el and not keep_title:
                 continue
             if e.kind == "heading":
                 demoted.append(e.text.strip())

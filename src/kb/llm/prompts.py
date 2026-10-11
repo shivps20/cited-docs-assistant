@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from kb.core.domain import Domain, get_domain
-from kb.retrieve.assemble import ContextUnit
+from kb.retrieve.assemble import ContextUnit, citation_text, location_parts
 
 NOT_FOUND = "I could not find the answer to this question in the available documents."
 
@@ -61,7 +61,8 @@ def format_context(context: Sequence[ContextUnit]) -> str:
     Comparison units also say which side they were found for ('| found for: Oracle')."""
     blocks = []
     for n, u in enumerate(context, start=1):
-        label = f"[{n}] {u.title} (applies to {release_text(u.release)}) | Section {u.heading_path} | {u.pages}"
+        label = " | ".join(part for part in (f"[{n}] {u.title} (applies to {release_text(u.release)})",
+                                             *location_parts(u.heading_path, u.pages, u.doc_type)) if part)
         if u.side:
             label += f" | found for: {u.side}"
         blocks.append(f"{label}\n{u.text.strip()}")
@@ -203,6 +204,8 @@ def missing_references(answer: str, cited: Sequence[tuple[int, ContextUnit]], li
 def source_line(n: int, unit: ContextUnit) -> str:
     """'[2] Admin Guide (R2026x), Section 2.2.3 Configure the Metadata, pp. 9-10', plus any near-identical
     copies: '· same text: Other Guide (R2026x), Section 2.2.3, p. 9'."""
-    line = f"[{n}] {unit.title} ({release_text(unit.release)}), Section {unit.heading}, {unit.pages}"
-    copies = [f"{s.title} ({release_text(s.release)}), Section {s.section_number}, {s.pages}" for s in unit.same_text]
+    line = citation_text(f"[{n}] {unit.title} ({release_text(unit.release)})",
+                         *location_parts(unit.heading, unit.pages, unit.doc_type))
+    copies = [citation_text(f"{s.title} ({release_text(s.release)})",
+                            *location_parts(s.section_number, s.pages, s.doc_type)) for s in unit.same_text]
     return line + (" · same text: " + "; ".join(copies) if copies else "")

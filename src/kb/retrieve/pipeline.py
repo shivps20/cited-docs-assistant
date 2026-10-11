@@ -88,7 +88,8 @@ class Retriever:
             with trace.stage("rerank", candidates=len(candidates), top=req.rerank_top,
                              max_length=getattr(self.reranker, "max_length", None), **tag) as stage:
                 candidates = rerank(self.reranker, req.query, candidates, top=req.rerank_top)
-                stage["top"] = [[c.chunk_id, round(c.rerank_score, 4)] for c in candidates[:10]
+                # every reranked candidate (top 20 by default), for the trace view (kb trace, "Behind the scenes")
+                stage["top"] = [[c.chunk_id, round(c.rerank_score, 4)] for c in candidates
                                 if c.rerank_score is not None]
 
         with trace.stage("assemble", min_score=req.min_context_score, **tag) as stage:

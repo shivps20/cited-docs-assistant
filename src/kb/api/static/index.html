@@ -100,6 +100,31 @@ sup.cite { color: var(--accent); cursor: pointer; font-weight: 600; padding: 0 1
 .ask textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .ask button { border: none; border-radius: 10px; padding: 11px 18px; background: var(--accent); color: #fff; font-weight: 600; }
 .ask button:disabled { opacity: .5; cursor: default; }
+.bts { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 1px 9px; font-size: 12.5px; }
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(760px, 100vw); background: var(--panel); border-left: 1px solid var(--line);
+  box-shadow: -8px 0 24px rgba(0,0,0,.18); display: flex; flex-direction: column; z-index: 20; }
+.drawer[hidden] { display: none; }
+.drawer .dh { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+.drawer .dh h2 { font-size: 15px; margin: 0; flex: 1; }
+.drawer .dh button { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 2px 10px; }
+.drawer .tabs { display: flex; gap: 4px; padding: 8px 16px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.drawer .tabs button { background: none; border: 1px solid transparent; border-bottom: none; border-radius: 7px 7px 0 0; padding: 5px 11px; font-size: 13px; color: var(--muted); }
+.drawer .tabs button.on { background: var(--panel-2); border-color: var(--line); color: var(--text); font-weight: 600; }
+.drawer .db { flex: 1; overflow: auto; padding: 12px 16px 24px; font-size: 13px; }
+.drawer table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.drawer th, .drawer td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.drawer th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--panel); }
+.drawer td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.drawer tr.inctx td { background: var(--warn-soft); }
+.drawer .kv { display: grid; grid-template-columns: 170px 1fr; gap: 4px 12px; margin: 6px 0 12px; }
+.drawer .kv div:nth-child(odd) { color: var(--muted); }
+.drawer pre.msg { white-space: pre-wrap; background: var(--panel-2); border: 1px solid var(--line); border-radius: 7px; padding: 8px 10px; max-height: 420px; overflow: auto; font-size: 12px; }
+.drawer .note { color: var(--muted); font-size: 12.5px; margin: 6px 0; }
+.drawer .bar { display: inline-block; height: 8px; background: var(--accent); border-radius: 3px; vertical-align: middle; margin-right: 6px; }
+.drawer .bad { color: var(--bad); }
+.drawer .good { color: var(--good, #1f7a4d); }
+.drawer .act { background: var(--accent); color: #fff; border: none; border-radius: 7px; padding: 6px 12px; font-weight: 600; }
+.drawer .act:disabled { opacity: .55; cursor: default; }
 @media (max-width: 760px) {
   .app { grid-template-columns: 1fr; }
   aside { display: none; }
@@ -140,6 +165,12 @@ sup.cite { color: var(--accent); cursor: pointer; font-weight: 600; padding: 0 1
     </div>
   </main>
 </div>
+
+<aside class="drawer" id="drawer" hidden aria-label="Behind the scenes">
+  <div class="dh"><h2 id="drawerTitle">Behind the scenes</h2><button type="button" id="drawerClose">Close ✕</button></div>
+  <div class="tabs" id="drawerTabs"></div>
+  <div class="db" id="drawerBody"></div>
+</aside>
 
 <script>
 "use strict";
@@ -267,7 +298,7 @@ function finishCard(card, f, contextUnits) {
     `<span title="trace id">trace ${esc((f.trace_id || "").slice(0, 8))}</span>`,
   ].filter(Boolean).join(" · ");
   card.querySelector(".rest").innerHTML = sourcesHtml(f.sources) + notices + contextHtml(contextUnits) +
-    `<div class="foot">${feedbackHtml(f.trace_id, null)}<span>${meta}</span></div>`;
+    `<div class="foot">${feedbackHtml(f.trace_id, null)}${btsButton(f.trace_id)}<span>${meta}</span></div>`;
 }
 
 // ------------------------------------------------------------------ asking (POST /api/chat, server-sent events)
@@ -371,12 +402,125 @@ async function openSession(id) {
       div.className = "msg";
       const nf = m.gate_decision && m.gate_decision !== "pass" || /^I could not find the answer/.test(m.content);
       div.innerHTML = `<div class="card ${nf ? "notfound" : ""}"><div class="answer">${renderMarkdown(m.content)}</div>${sourcesHtml(m.sources)}
-        <div class="foot">${feedbackHtml(m.trace_id, m.rating, m.comment, m.reason)}<span>trace ${esc((m.trace_id || "").slice(0, 8))}</span></div></div>`;
+        <div class="foot">${feedbackHtml(m.trace_id, m.rating, m.comment, m.reason)}${btsButton(m.trace_id)}<span>trace ${esc((m.trace_id || "").slice(0, 8))}</span></div></div>`;
       $("thread").appendChild(div);
     }
     if (!s.messages.length) showEmpty();
     loadSessions(); scrollDown();
   } catch (err) { alert(err.message); }
+}
+
+// ------------------------------------------------------------------ behind the scenes (GET /api/traces/{id})
+const trace = { id: null, view: null, tab: "retrieval" };
+const TABS = [["retrieval", "Retrieval"], ["context", "Context"], ["prompt", "Prompt"], ["checks", "Checks"], ["timings", "Timings"]];
+function btsButton(traceId) {
+  return traceId ? `<button type="button" class="bts" data-bts="${esc(traceId)}" title="Candidates, scores, context, prompt and checks of this answer">Behind the scenes</button>` : "";
+}
+const num = (v, d = 4) => (v === null || v === undefined ? "–" : Number(v).toFixed(d));
+function where(u) {
+  if (u.page_start === null || u.page_start === undefined || u.doc_type === "docx") return "";
+  const unit = u.doc_type === "pptx" ? "slide" : "p.";
+  return u.page_start === u.page_end ? `${unit} ${u.page_start}` : `${unit} ${u.page_start}-${u.page_end}`;
+}
+async function openTrace(id) {
+  trace.id = id; trace.view = null;
+  $("drawer").hidden = false;
+  $("drawerTitle").textContent = `Behind the scenes · trace ${id.slice(0, 8)}`;
+  $("drawerBody").innerHTML = `<p class="note">Loading…</p>`;
+  renderTabs();
+  try { trace.view = await api(`/api/traces/${id}`); renderTrace(); }
+  catch (err) { $("drawerBody").innerHTML = `<p class="bad">${esc(err.message)}</p>`; }
+}
+function renderTabs() {
+  $("drawerTabs").innerHTML = TABS.map(([k, label]) => `<button type="button" data-tab="${k}" class="${trace.tab === k ? "on" : ""}">${label}</button>`).join("");
+}
+function renderTrace() {
+  const v = trace.view; if (!v) return;
+  renderTabs();
+  const body = { retrieval: tabRetrieval, context: tabContext, prompt: tabPrompt, checks: tabChecks, timings: tabTimings }[trace.tab](v);
+  const cached = v.cache.hit ? `<p class="note">Served from the answer cache. The original answer has the full details:
+      <a href="#" data-open-trace="${esc(v.cache.served_from || "")}">trace ${esc((v.cache.served_from || "").slice(0, 8))}</a></p>` : "";
+  $("drawerBody").innerHTML = cached + body;
+}
+function tabRetrieval(v) {
+  const g = v.gate, f = v.filters || {};
+  const head = `<div class="kv">
+      <div>Question</div><div>${esc(v.query)}</div>
+      ${v.standalone_query ? `<div>Searched as</div><div>${esc(v.standalone_query)}</div>` : ""}
+      <div>Filters</div><div>groups ${esc((f.groups || []).join(", "))} · release ${esc(f.release || "any")} · latest editions only · ${esc(f.mode || "")} search, ${esc(f.limit || "")} candidates</div>
+      <div>Gate</div><div><b>${esc(g.decision || "–")}</b>: top rerank score ${num(g.top_score, 3)} against the threshold ${esc(g.threshold ?? "–")}</div>
+    </div>`;
+  const old = v.rerank.some((r) => r.stored <= 10 && (r.candidates || 0) > r.stored)
+    ? `<p class="note">This answer was traced before every rerank score was kept: only the top 10 are known.</p>` : "";
+  const rows = v.candidates.map((c) => `<tr class="${c.in_context ? "inctx" : ""}">
+      ${v.candidates.some((x) => x.side) ? `<td>${esc(c.side || "")}</td>` : ""}
+      <td class="num">${c.rerank_rank ?? ""}</td>
+      <td class="num">${c.rerank_score === null ? "–" : `<span class="bar" style="width:${Math.round(c.rerank_score * 60)}px"></span>${num(c.rerank_score)}`}</td>
+      <td class="num">${c.retrieval_rank}</td><td class="num">${num(c.retrieval_score)}</td>
+      <td>${c.in_context ? "✓" : ""}</td>
+      <td>${esc(c.title || c.chunk_id)}<br><span class="note">${esc(c.section || "")} ${esc(where(c))}</span></td></tr>`).join("");
+  return head + old + `<p class="note">Reranked candidates first (cross-encoder score 0–1), then the rest in search order (fusion score). Highlighted rows reached the context.</p>
+    <table><thead><tr>${v.candidates.some((x) => x.side) ? "<th>Side</th>" : ""}<th>Rerank #</th><th>Rerank score</th><th>Search #</th><th>Retrieval score</th><th>In context</th><th>Document · section</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+function tabContext(v) {
+  if (!v.context.length) return `<p class="note">Nothing was sent to the model (${esc(v.gate.decision || "no context")}).</p>`;
+  return `<p class="note">The numbered sources the model answered from${v.context[0].from_assemble ? " (older trace: rebuilt from the assembly step)" : ""}.</p>
+    <table><thead><tr><th>#</th><th>Document · section</th><th>Where</th><th>Kind</th><th>Tokens</th></tr></thead><tbody>${v.context.map((u, i) => `<tr>
+      <td class="num">${i + 1}</td><td>${esc(u.title)}<br><span class="note">${esc(u.heading_path || "")}${u.side ? " · side " + esc(u.side) : ""}</span>
+      ${(u.same_text || []).length ? `<br><span class="note">same text: ${u.same_text.map((s) => esc(s.title)).join("; ")}</span>` : ""}</td>
+      <td>${esc(where(u))}</td><td>${esc(u.kind)}</td><td class="num">${u.tokens}</td></tr>`).join("")}</tbody></table>`;
+}
+function tabPrompt(v) {
+  if (!v.generations.length) return `<p class="note">No model was called (${esc(v.gate.decision || "")}).</p>`;
+  return v.generations.map((g, i) => {
+    const title = v.generations.length > 1 ? `<h3>Generation ${i + 1} of ${v.generations.length}</h3>` : "";
+    const info = `<div class="kv"><div>Model</div><div>${esc(g.profile)} (${esc(g.model)})${(g.fallback_from || []).length ? ` · fell back from ${esc(g.fallback_from.join(", "))}` : ""}</div>
+      <div>Tokens</div><div>prompt ${g.prompt_tokens ?? "–"} · answer ${g.output_tokens ?? "–"} · ${num(g.tokens_per_s, 1)} tok/s · ${(g.duration_ms / 1000).toFixed(1)} s</div>
+      ${g.context_fitted ? `<div>Context fitted</div><div>${g.context_fitted[0]} → ${g.context_fitted[1]} units (smaller model window)</div>` : ""}</div>`;
+    if (!g.messages) return title + info + `<p class="note">The prompt was not stored for this answer (traced before prompts were kept).</p>`;
+    const same = g.prompt_identical === true ? "identical to what was sent" : g.prompt_identical === false ? "rebuilt with today's prompt code, which has changed since this answer" : "rebuilt";
+    return title + info + `<p class="note">Exact messages (${same}).</p>` +
+      g.messages.map((m) => `<div class="note"><b>${esc(m.role)}</b></div><pre class="msg">${esc(m.content)}</pre>`).join("") +
+      (g.raw_output ? `<div class="note"><b>raw model output</b> (before citation checks)</div><pre class="msg">${esc(g.raw_output)}</pre>` : "");
+  }).join("");
+}
+function tabChecks(v) {
+  const c = v.checks, fa = v.faithfulness;
+  const cmd = c.commands ? `${c.commands.total} commands; ${c.commands.unverified.length ? `<span class="bad">${c.commands.unverified.length} not found word for word in the context</span>: ${c.commands.unverified.map((x) => `<code>${esc(x)}</code>`).join(", ")}` : `<span class="good">all found in the context</span>`}` : "–";
+  let faith = `<button type="button" class="act" id="faithBtn">Check faithfulness</button> <span class="note">one more LLM call on the local model, 20–60 s; waits for a running answer</span>`;
+  if (!fa && !v.generations.some((g) => g.messages)) {
+    faith = `<span class="note">not available: ${v.cache.hit ? "a cached copy (check the original trace)" : v.generations.length ? "this answer was traced before contexts were stored" : "no answer was generated"}</span>`;
+  }
+  if (fa) {
+    const claims = fa.claims || [];
+    faith = fa.error ? `<span class="bad">judge failed: ${esc(fa.error)}</span>` :
+      `<b>${num(fa.faithfulness, 2)}</b> · ${claims.filter((x) => x.supported).length} of ${claims.length} claims supported · judge ${esc(fa.model)}${fa.note ? " · " + esc(fa.note) : ""}
+       <table style="margin-top:6px"><thead><tr><th></th><th>Claim</th><th>Evidence quoted by the judge</th></tr></thead><tbody>${claims.map((x) => `<tr>
+         <td class="${x.supported ? "good" : "bad"}">${x.supported ? "✓" : "✗"}</td><td>${esc(x.claim)}</td>
+         <td>${esc(x.evidence || "")}${x.by_values ? ' <span class="note">(supported by its values)</span>' : ""}</td></tr>`).join("")}</tbody></table>`;
+    faith += ` <button type="button" class="bts" id="faithAgain">Check again</button>`;
+  }
+  return `<div class="kv">
+      <div>Citations kept</div><div>${esc((c.cited || []).join(", ") || "–")}</div>
+      <div>Citations removed</div><div>${esc((c.invalid_citations || []).join(", ") || "none")} <span class="note">(numbers without such a source)</span></div>
+      <div>Refused</div><div>${c.refused ? "yes" : "no"}${c.retry ? ` · retried with the ${(c.retry.units || []).length} best sources` : ""}</div>
+      <div>Command check</div><div>${cmd}</div>
+      <div>Faithfulness</div><div id="faithCell">${faith}</div></div>`;
+}
+function tabTimings(v) {
+  const max = Math.max(...v.timings.map((t) => t.duration_ms), 1);
+  return `<p class="note">Total ${((v.total_ms || 0) / 1000).toFixed(1)} s.</p><table><thead><tr><th>#</th><th>Stage</th><th>Time</th><th></th></tr></thead><tbody>${v.timings.map((t) => `<tr>
+    <td class="num">${t.seq}</td><td>${esc(t.stage)}${t.side ? " (" + esc(t.side) + ")" : ""}</td>
+    <td class="num">${t.duration_ms >= 1000 ? (t.duration_ms / 1000).toFixed(2) + " s" : Math.round(t.duration_ms) + " ms"}</td>
+    <td><span class="bar" style="width:${Math.max(1, Math.round(t.duration_ms / max * 260))}px"></span></td></tr>`).join("")}</tbody></table>`;
+}
+async function checkFaithfulness(force) {
+  const cell = $("faithCell"); if (!cell) return;
+  cell.innerHTML = `<span class="note">Checking… (20–60 s)</span>`;
+  try {
+    trace.view.faithfulness = await api(`/api/traces/${trace.id}/faithfulness${force ? "?force=true" : ""}`, { method: "POST" });
+    renderTrace();
+  } catch (err) { cell.innerHTML = `<span class="bad">${esc(err.message)}</span>`; }
 }
 
 // ------------------------------------------------------------------ feedback
@@ -445,6 +589,7 @@ async function checkHealth() {
 // ------------------------------------------------------------------ events
 function autoGrow() { const t = $("q"); t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 180) + "px"; }
 $("q").addEventListener("input", autoGrow);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("drawer").hidden) $("drawer").hidden = true; });
 $("q").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } });
 $("send").onclick = ask;
 $("newBtn").onclick = newConversation;
@@ -461,6 +606,15 @@ document.addEventListener("click", (e) => {
   const sess = e.target.closest("[data-session]");
   if (sess && !state.busy) { openSession(sess.dataset.session); return; }
   if (e.target.closest("#clearRelease")) { clearRelease(); return; }
+  const bts = e.target.closest("[data-bts]");
+  if (bts) { openTrace(bts.dataset.bts); return; }
+  const tab = e.target.closest("#drawerTabs [data-tab]");
+  if (tab) { trace.tab = tab.dataset.tab; renderTrace(); return; }
+  const other = e.target.closest("[data-open-trace]");
+  if (other) { e.preventDefault(); if (other.dataset.openTrace) openTrace(other.dataset.openTrace); return; }
+  if (e.target.closest("#drawerClose")) { $("drawer").hidden = true; return; }
+  if (e.target.closest("#faithBtn")) { checkFaithfulness(false); return; }
+  if (e.target.closest("#faithAgain")) { checkFaithfulness(true); return; }
   const rateBtn = e.target.closest("[data-rate]");
   if (rateBtn) { rate(rateBtn); return; }
   const cite = e.target.closest("sup.cite");

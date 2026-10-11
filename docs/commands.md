@@ -5,6 +5,7 @@ Every `kb` command with its options and examples. Run them from the project root
 ## Ingestion at a glance
 
 ```bash
+uv run kb ingest [--folder PATH] [--retry-failed] [--dry-run]   # parse + chunk + index what needs it
 uv run kb parse [--doc DOC_ID] [--force]   # parse with Docling; results cached in data/parsed/
 uv run kb status                           # status and parse statistics per document
 uv run kb inspect DOC_ID [--details]       # rebuilt section tree (numbers, pages, size)
@@ -18,6 +19,32 @@ uv run kb index [--doc DOC_ID] [--force] [--prune]   # embed (bge-m3, GPU) and w
 `kb index` re-embeds only documents that were (re)chunked; if only manifest values changed (groups, external_ok, release range, latest revision) it updates the Qdrant payload in place. `--prune` removes documents that are no longer in the manifest. Stop any loaded Ollama model first (`ollama stop <model>`): the 6 GB GPU cannot hold both.
 
 Status and statistics are also stored in the `documents` table of `data/kb.db`.
+
+### `kb ingest` — parse, chunk and index in one run
+
+Runs the three steps below for every manifest document that needs them, and skips what is up to date: a document is parsed only when its file changed or its parse is missing (not even the cached parse is loaded otherwise), chunked when `kb chunk` would rebuild it, and embedded when it was (re)chunked or is not yet indexed; manifest-only changes (groups, release, latest revision) are applied to the index in place. So an interrupted or failed run is continued by simply running it again.
+
+A document that fails a step is left out of the later steps and written to the failure log (`data/logs/ingest_failures.csv`, `KB_FAILURE_LOG`: run, time, step, document, error); the run ends with a list of the failures. Fix the cause, then `--retry-failed` runs only the documents that failed in the latest run. `kb status` shows the latest run's failures too. The parser is unloaded before bge-m3 loads; stop any loaded Ollama model first (`ollama stop <model>`).
+
+<table style="width:100%">
+<colgroup><col style="width:40%"><col style="width:60%"></colgroup>
+<thead><tr><th>Option</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>--doc DOC_ID</code></td><td>Only this document (repeatable)</td></tr>
+<tr><td><code>--folder PATH</code></td><td>Only manifest documents in this folder and its subfolders (e.g. a batch drafted with <code>kb manifest scan --folder</code>)</td></tr>
+<tr><td><code>--retry-failed</code></td><td>Only the documents that failed in the latest run</td></tr>
+<tr><td><code>--dry-run</code></td><td>Show how many documents each step would process, and which, without changing anything</td></tr>
+</tbody>
+</table>
+
+```bash
+uv run kb ingest --dry-run                    # what would be done
+uv run kb ingest                              # everything that needs it
+uv run kb ingest --folder "E:/Docs/New"       # one batch
+uv run kb ingest --retry-failed               # after fixing the causes of the last run's failures
+```
+
+For rebuilds after code or `config/domain.yaml` changes use `kb chunk --force` (then `kb ingest` or `kb index`); `kb ingest` has no `--force`, so a run can never re-parse the whole corpus by accident. The single-step commands below remain for one document or one step.
 
 > **Editing in Excel:** Excel rewrites versions such as `1.0` as `1` and `1.10` as `1.1`, which changes which revision counts as latest. Format the `version` column as Text, or edit the CSV in a text editor.
 
@@ -69,8 +96,8 @@ uv run python scripts/init_db.py --reset --yes          # empty database, then p
 <colgroup><col style="width:40%"><col style="width:60%"></colgroup>
 <thead><tr><th>Command</th><th>What it does</th></tr></thead>
 <tbody>
-<tr><td><code>uv run kb manifest scan [--folder PATH] [--dry-run]</code></td><td>Draft rows for the files (types in <code>KB_DOC_TYPES</code>) in <code>KB_DOCS_DIR</code>, or in <code>--folder</code> (any folder, read where it is: rows get absolute paths), and its subfolders that are not in the manifest: a count per subfolder, files whose content is already listed (or found twice) skipped and reported, doc ids kept unique across subfolders (same file name in two folders gets the folder name as prefix). <code>--dry-run</code> shows what would be drafted and writes nothing</td></tr>
-<tr><td><code>uv run kb manifest validate</code></td><td>Check every row (columns, categories, releases, dates, duplicate IDs, missing files, two rows with the same family and version); lists all problems with line numbers and how to fix a family clash; counts and lists rows still marked for review</td></tr>
+<tr><td><code>uv run kb manifest scan [--folder PATH] [--dry-run]</code></td><td>Draft rows for the files (types in <code>KB_DOC_TYPES</code>) in <code>KB_DOCS_DIR</code>, or in <code>--folder</code> (any folder, read where it is: rows get absolute paths), and its subfolders that are not in the manifest: a count per subfolder, files whose content is already listed (or found twice) skipped and reported, a PDF whose deck or Word file of the same name is listed or found skipped too (only the preferred format is drafted: <code>.pptx</code>, then <code>.pdf</code>, then <code>.docx</code>), doc ids kept unique across subfolders (same file name in two folders gets the folder name as prefix). <code>--dry-run</code> shows what would be drafted and writes nothing</td></tr>
+<tr><td><code>uv run kb manifest validate</code></td><td>Check every row (columns, categories, releases, dates, duplicate IDs, missing files, two rows with the same family and version); lists all problems with line numbers and how to fix a family clash; counts and lists rows still marked for review. Then warnings, which do not fail the check but should be looked at before <code>kb ingest</code>: one document in two formats (which line to keep), the same file name in several folders, rows open to <code>all</code> whose path says internal, confidential or restricted, a family whose highest version has an older release than an earlier version, and likely editions of one document in different families (all searched as latest); warnings are shown even when the manifest has errors, since they often explain them</td></tr>
 <tr><td><code>uv run kb manifest backfill [--write]</code></td><td>Fill what older rows lack: the <code>added</code> date (first ingestion in <code>kb.db</code>, else the file date) and, for rows without a release, the release from the file name or the PDF's first pages. Shows the changes; <code>--write</code> applies them (backup in <code>data/</code>) and notes each in the <code>review</code> column</td></tr>
 </tbody>
 </table>
@@ -95,11 +122,11 @@ uv run kb parse                                       # all new or changed docum
 uv run kb parse --doc sso-setup --force
 ```
 
-Parsing typically takes 0.1–0.5 s per page on the GPU (a 214-page guide in about 30 s). Long batches (`parse`, `chunk`, `index`, `coverage`, `eval`, `eval-answers`) keep Windows awake while they run; keep a laptop plugged in with the lid open, because Modern Standby otherwise slows the process down heavily and then sleeps. `kb parse` prints a WARN for any document that took over 2 minutes while using under a tenth of that in CPU time (the machine was asleep or throttled); re-parse such a document with `--doc DOC_ID --force` to record its real time.
+Parsing typically takes 0.1–0.5 s per page on the GPU (a 214-page guide in about 30 s). Long batches (`ingest`, `parse`, `chunk`, `index`, `coverage`, `eval`, `eval-answers`) keep Windows awake and the display on while they run (with the screen off, Modern Standby can pause the process even when plugged in); keep a laptop plugged in with the lid open. Documents are parsed in a separate worker process that is replaced every 50 documents (the parser leaves threads behind; a worker that crashes, or a document still parsing after 30 minutes, fails only that document), so Docling's "Loading weights" line appears again every 50 documents. In a CMD or PowerShell window, selecting text pauses the program writing to it until you press Esc: for long runs, send the output to a file (`uv run kb ingest > data\logs\ingest-run.log 2>&1`) and follow it in another window (`powershell -Command "Get-Content data\logs\ingest-run.log -Wait -Tail 20"`). `kb parse` prints a WARN for any document that took over 2 minutes while using under a tenth of that in CPU time (the machine was asleep or throttled); re-parse such a document with `--doc DOC_ID --force` to record its real time.
 
 ### `kb status`
 
-Status per document (parsed / chunked / indexed), parse statistics (pages, seconds, headings, tables, pictures, empty pages) and chunk counts. No options.
+Status per document (parsed / chunked / indexed), parse statistics (pages, seconds, headings, tables, pictures, empty pages) and chunk counts, then a summary per status and the latest `kb ingest` run with its failures per step. No options.
 
 ### `kb inspect` — review a document's structure and chunks
 
@@ -260,6 +287,19 @@ uv run kb ask "How does the database setup differ between MSSQL and Oracle?"   #
 uv run kb ask "..." --model claude-opus                                      # a model from config/models.yaml (key in .env)
 ```
 
+### `kb trace` — behind the scenes of one answer
+
+```bash
+uv run kb trace                      # the latest answer
+uv run kb trace 7b93a3da             # by trace id or its first characters (as shown under each answer)
+uv run kb trace 7b93a3da --prompt    # also print the exact messages sent to the model
+uv run kb trace 7b93a3da --all       # every search candidate, not only the reranked ones
+uv run kb trace 7b93a3da --faithfulness   # run the faithfulness judge on it (one LLM call; stored with the trace)
+uv run kb trace 7b93a3da --json      # the whole view as JSON
+```
+
+Shows, from the answer's trace: the question and filters; the gate (top rerank score against the threshold); every candidate with its rerank rank and score, its search rank and retrieval (fusion) score, and whether it reached the context; the context units sent to the model; each generation's model, tokens, speed and fallbacks, and the prompt; the checks (citations kept and removed, the refusal retry, commands not found word for word in the context, the faithfulness verdict if checked); the stage timings. `--faithfulness --force` judges again. Answers traced before 2026-10-11 show what was recorded then: the top 10 rerank scores only, the context from the assembly step, and no prompt. The chat page shows the same in **Behind the scenes** under each answer.
+
 ### `kb serve` — chat API
 
 Starts the chat API and web UI; endpoints, the chat turn and the UI are described in [api.md](api.md).
@@ -321,15 +361,29 @@ The output ends with a recommended threshold, the refusals that are generation p
 **New or changed document**
 
 ```bash
-uv run kb manifest scan          # new file -> draft row; fill it in
-uv run kb manifest validate
-uv run kb parse
-uv run kb inspect <doc_id> --details
-uv run kb chunk --doc <doc_id>
-ollama stop qwen2.5:7b-instruct
-uv run kb index
-uv run kb coverage
+uv run kb manifest scan                # draft a manifest row for each new file; then review access, groups and the review notes
+uv run kb manifest validate            # check every row (errors must be fixed) and show warnings (formats, folders, access)
+ollama stop qwen2.5:7b-instruct        # free the GPU: parsing and embedding need it
+uv run kb ingest                       # parse, chunk and index only what is new or changed; failures go to the failure log
+uv run kb inspect <doc_id> --details   # check the new document's section structure (titles, pages, what was removed)
+uv run kb coverage                     # confirm the golden questions' facts are still present in the stored chunks
 ```
+
+**A large batch (hundreds of documents): parse first, check, then finish.** Parsing is the long step (hours) and the one most likely to fail, so stop after it and look at the results before anything is embedded.
+
+```bash
+uv run kb manifest scan --folder "E:/Docs/New"   # draft rows; review access, groups and the review notes
+uv run kb manifest validate                       # no errors; look at every warning (formats, folders, access)
+uv run kb ingest --dry-run                        # how many documents each step would process
+ollama stop qwen2.5:7b-instruct
+uv run kb parse                                   # new or changed documents; already parsed ones load from the cache
+uv run kb status                                  # failures, documents with few texts or many empty pages
+uv run kb inspect <doc_id> --details              # spot checks: section titles of decks, Word files
+uv run kb ingest                                  # parse is done, so this chunks and indexes
+uv run kb status                                  # all documents indexed; the latest run's failures, if any
+```
+
+Check after `kb parse`: documents marked FAILED (re-run with `uv run kb parse --doc <doc_id>`, or leave them to `kb ingest`, which retries anything not yet parsed); image-only PDFs (many pages, almost no texts: candidates for OCR); decks whose sections are all "Slide N". `kb parse` prints its failures but does not write the failure log; `kb ingest` does, so `uv run kb ingest --retry-failed` covers failures from the second half. For a few documents, `kb ingest` alone is simpler.
 
 **After changing the structure or chunking code, or `config/domain.yaml`:** `uv run kb chunk --force` (all, or the affected `--doc`s), then `uv run kb index`, `uv run kb coverage` and `uv run kb eval --configs dense,hybrid+rr10`.
 

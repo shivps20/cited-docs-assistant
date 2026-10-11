@@ -341,6 +341,135 @@ def load_manifest(manifest_path: Path, docs_dir: Path) -> list[Document]:
             for _, item in parsed]
 
 
+# Which copy to keep when one document is listed in two formats: decks parse into one section per slide with
+# slide numbers; a PDF keeps real page numbers, which a Word file lacks (TD-27); converted old formats come last.
+FORMAT_PREFERENCE = (".pptx", ".ppt", ".pdf", ".docx", ".doc")
+# "Restricted access" is also a product feature (documents about it are not restricted themselves).
+_RESTRICTED_WORD = re.compile(r"(?<![a-z])(internal|confidential|restricted(?![\s_-]*access))(?![a-z])",
+                              re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class ManifestWarning:
+    """Something in the manifest that is valid but probably wrong; `kb manifest validate` lists them."""
+
+    kind: str                   # other-format | same-name | access | releases | editions
+    lines: tuple[int, ...]      # manifest lines involved
+    message: str
+
+
+def _format_rank(suffix: str) -> int:
+    """Position of a file suffix in FORMAT_PREFERENCE (unknown suffixes last)."""
+    suffix = suffix.lower()
+    return FORMAT_PREFERENCE.index(suffix) if suffix in FORMAT_PREFERENCE else len(FORMAT_PREFERENCE)
+
+
+def _edition_key(stem: str) -> str:
+    """A file name without its version and release tokens: editions of one guide share it."""
+    return name_slug(_RELEASE_TOKEN.sub(" ", version_in_name(stem)[0]))
+
+
+def manifest_warnings(rows: list[dict[str, str]]) -> list[ManifestWarning]:
+    """Warnings for manifest rows (as read by read_rows; line = position + 2). Works on rows that do not
+    validate yet, so the warnings help to fix the errors too:
+
+    - other-format: the same file name in two formats (a deck or Word file and its PDF export): keep one;
+    - same-name: the same file name and format in two folders: one copy, a newer edition or another document;
+    - access: 'internal', 'confidential' or 'restricted' in the path while the row is open to `all`;
+    - releases: in a family, the highest version (the one searched) has an older or no release while an older
+      version names a later one: the version order contradicts the releases (TD-20). A newer edition for a
+      later release (v1 R2020x+, v2 R2021x+) is the normal succession and not warned about;
+    - editions: the same name apart from version or release, same release range, in different families, so both
+      are searched as latest (TD-20, TD-24)."""
+    items = []
+    for line, r in enumerate(rows, start=2):
+        path = r["path"].strip().replace("\\", "/")
+        if not path:
+            continue
+        name = path.rsplit("/", 1)[-1]
+        stem, _, suffix = name.rpartition(".")
+        items.append({"line": line, "path": path, "folder": path.rsplit("/", 1)[0] if "/" in path else ".",
+                      "stem": stem or name, "suffix": f".{suffix.lower()}" if stem else "",
+                      "family": r["family"].strip() or r["doc_id"].strip(),
+                      "groups": {g.strip() for g in r["allowed_groups"].split(";") if g.strip()},
+                      "release": (r["release_min"].strip(), r["release_max"].strip())})
+    warnings: list[ManifestWarning] = []
+
+    by_stem: dict[str, list[dict]] = {}
+    for it in items:
+        by_stem.setdefault(it["stem"].lower(), []).append(it)
+    for group in by_stem.values():
+        if len(group) < 2:
+            continue
+        suffixes = {it["suffix"] for it in group}
+        if len(suffixes) > 1:
+            keep = min(group, key=lambda it: _format_rank(it["suffix"]))
+            drop = [it for it in group if it["suffix"] != keep["suffix"]]
+            warnings.append(ManifestWarning("other-format", tuple(it["line"] for it in group),
+                f"'{keep['stem']}' is listed as {', '.join(sorted(suffixes))}: probably one document exported to "
+                f"another format; keep the {keep['suffix']} (line {keep['line']}) and delete line(s) "
+                f"{', '.join(str(it['line']) for it in drop)}"))
+        for suffix in suffixes:
+            same = [it for it in group if it["suffix"] == suffix]
+            if len(same) > 1:
+                warnings.append(ManifestWarning("same-name", tuple(it["line"] for it in same),
+                    f"'{same[0]['stem']}{suffix}' is in {len(same)} folders "
+                    f"({'; '.join(it['folder'].rsplit('/', 1)[-1] or '.' for it in same)}): if it is the same "
+                    f"document keep one row; if one is newer give it a higher version; if they differ, give each "
+                    f"its own family"))
+
+    for it in items:
+        match = _RESTRICTED_WORD.search(it["path"])
+        if match and "all" in it["groups"]:
+            warnings.append(ManifestWarning("access", (it["line"],),
+                f"'{it['stem']}' says {match.group(1).upper()} but allowed_groups includes 'all': every user can "
+                f"search it; set its groups (e.g. ds-internal) or confirm it is public"))
+
+    by_family: dict[str, list[dict]] = {}
+    for it in items:
+        by_family.setdefault(it["family"], []).append(it)
+    for family, group in by_family.items():
+        if len(group) < 2:
+            continue
+        def release_start(it: dict) -> int:
+            """The row's release_min as a year (no release = RELEASE_ANY_MIN; unreadable = ignored)."""
+            try:
+                return parse_release(it["release"][0]) if it["release"][0] else RELEASE_ANY_MIN
+            except ValueError:
+                return RELEASE_ANY_MIN
+        def version(it: dict) -> tuple[int, ...]:
+            """The row's version as a sort key (unreadable versions sort first)."""
+            try:
+                return _version_key(rows[it["line"] - 2]["version"].strip())
+            except ValueError:
+                return ()
+        latest = max(group, key=version)
+        later = [it for it in group if it is not latest and release_start(it) > release_start(latest)]
+        if later:
+            warnings.append(ManifestWarning("releases", tuple(it["line"] for it in group),
+                f"family '{family}': the highest version (line {latest['line']}, searched as latest) has an older or "
+                f"no release, while line(s) {', '.join(str(it['line']) for it in later)} name a later one; "
+                f"put the versions in date order, or give each release its own family"))
+
+    by_edition: dict[tuple, list[dict]] = {}
+    for it in items:
+        by_edition.setdefault((_edition_key(it["stem"]), it["release"]), []).append(it)
+    for group in by_edition.values():
+        families = {it["family"] for it in group}
+        stems = {it["stem"].lower() for it in group}
+        if len(families) > 1 and len(stems) > 1:
+            warnings.append(ManifestWarning("editions", tuple(it["line"] for it in group),
+                f"'{group[0]['stem']}' and {len(group) - 1} more look like editions of one document in "
+                f"{len(families)} families, so each is searched as latest; if they are editions, give them one "
+                f"family and versions in date order"))
+    return sorted(warnings, key=lambda w: (w.kind, w.lines))
+
+
+def is_lock_file(path: Path) -> bool:
+    """Office's temporary owner file (~$Name.pptx) next to a document that is open: not a document."""
+    return path.name.startswith("~$")
+
+
 def find_unlisted(manifest_path: Path, docs_dir: Path) -> list[Path]:
     """Supported files under docs_dir that have no manifest row."""
     listed = set()
@@ -349,7 +478,7 @@ def find_unlisted(manifest_path: Path, docs_dir: Path) -> list[Path]:
             listed = {(docs_dir / row["path"].strip()).resolve() for row in csv.DictReader(f)}
     types = doc_types()
     return sorted(p for p in docs_dir.rglob("*")
-                  if p.is_file() and p.suffix.lower() in types and p.resolve() not in listed)
+                  if p.is_file() and p.suffix.lower() in types and not is_lock_file(p) and p.resolve() not in listed)
 
 
 def draft_row(path: Path, docs_dir: Path, *, today: str = "", cover_text: str = "",
@@ -400,6 +529,7 @@ class ScanReport:
     listed: int                                      # of those, already in the manifest
     rows: list[dict[str, str]] = field(default_factory=list)          # draft rows for new files
     duplicates: list[tuple[str, str]] = field(default_factory=list)   # (new file, what it repeats), not drafted
+    other_formats: list[tuple[str, str]] = field(default_factory=list)  # (new file, the copy kept), not drafted
 
     def by_folder(self) -> dict[str, int]:
         """Number of new files per subfolder of the scanned folder ('.' = the folder itself), sorted."""
@@ -496,7 +626,7 @@ def scan_folder(manifest_path: Path, docs_dir: Path, file_hash: Callable[[Path],
     listed_paths = {(docs_dir / r["path"].strip()).resolve(): r["doc_id"].strip() for r in listed_rows}
     root = folder or docs_dir
     types = doc_types()
-    files = sorted(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in types)
+    files = sorted(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in types and not is_lock_file(p))
     report = ScanReport(docs_dir=root, supported=len(files),
                         listed=sum(1 for p in files if p.resolve() in listed_paths))
     known: dict[str, str] = {}                         # content hash -> what holds it
@@ -504,10 +634,22 @@ def scan_folder(manifest_path: Path, docs_dir: Path, file_hash: Callable[[Path],
         if path.is_file():
             known.setdefault(file_hash(path), f"manifest doc_id '{doc_id}'")
     taken = {r["doc_id"].strip() for r in listed_rows}
+    # One document in several formats (a deck and its PDF export): only the preferred format is drafted.
+    preferred: dict[str, Path] = {}
+    for path in [*listed_paths, *files]:
+        best = preferred.get(path.stem.lower())
+        if best is None or _format_rank(path.suffix) < _format_rank(best.suffix):
+            preferred[path.stem.lower()] = path
     for path in files:
         if path.resolve() in listed_paths:
             continue
         rel = path.relative_to(root).as_posix()
+        best = preferred[path.stem.lower()]
+        if best.suffix.lower() != path.suffix.lower():
+            kept = listed_paths.get(best.resolve())
+            report.other_formats.append((rel, f"manifest doc_id '{kept}'" if kept else
+                                         f"new file '{best.relative_to(root).as_posix()}'"))
+            continue
         digest = file_hash(path)
         if digest in known:
             report.duplicates.append((rel, known[digest]))

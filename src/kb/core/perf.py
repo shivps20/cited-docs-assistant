@@ -19,6 +19,7 @@ from contextlib import contextmanager
 
 _ES_CONTINUOUS = 0x80000000                    # SetThreadExecutionState flags
 _ES_SYSTEM_REQUIRED = 0x00000001               # "this thread needs the system awake" (the display may sleep)
+_ES_DISPLAY_REQUIRED = 0x00000002              # keep the display on: with it off, Modern Standby pauses the process
 
 _PROCESS_POWER_THROTTLING = 4                  # PROCESS_INFORMATION_CLASS.ProcessPowerThrottling
 _THROTTLING_CURRENT_VERSION = 1
@@ -54,7 +55,10 @@ def disable_power_throttling() -> bool:
 
 @contextmanager
 def keep_awake() -> Iterator[bool]:
-    """Keep Windows from sleeping while the block runs (the screen may still turn off).
+    """Keep Windows from sleeping, and the display on, while the block runs.
+
+    The display matters: on Modern Standby laptops a screen that turns off (by timeout or a lock policy) lets
+    Windows pause desktop programs even when plugged in with the lid open (a parse used 14 s of CPU in 1,240 s).
 
     Yields True when the request was accepted. Closing the laptop lid can still put it to sleep,
     depending on the power settings. No effect on other systems.
@@ -67,7 +71,7 @@ def keep_awake() -> Iterator[bool]:
             kernel32.SetThreadExecutionState.restype = ctypes.c_uint32
         except (AttributeError, OSError):
             kernel32 = None
-    accepted = bool(kernel32 and kernel32.SetThreadExecutionState(_ES_CONTINUOUS | _ES_SYSTEM_REQUIRED))
+    accepted = bool(kernel32 and kernel32.SetThreadExecutionState(_ES_CONTINUOUS | _ES_SYSTEM_REQUIRED | _ES_DISPLAY_REQUIRED))
     try:
         yield accepted
     finally:

@@ -1,6 +1,6 @@
 # Knowledge-Base Assistant
 
-A local, retrieval-augmented question-answering assistant over technical documentation (PDF, PPTX, DOCX). It answers single-fact lookups, how-to questions and cross-document comparisons, with every answer citing document, section and page.
+A local, retrieval-augmented question-answering assistant over technical documentation (PDF, PPTX, DOCX). It answers single-fact lookups, how-to questions and cross-document comparisons, with every answer citing document, section and page (slide for decks; Word files have no fixed pages, so they are cited by section).
 
 Everything runs on one workstation: Qdrant in Docker, bge-m3 embeddings and the bge-reranker in-process, and a local LLM through Ollama. Other models (OpenAI, Mistral, Gemini, Claude) can be added in `config/models.yaml` and chosen per question; they only ever see documents cleared for external use (`external_ok` in the manifest).
 
@@ -11,7 +11,8 @@ Everything runs on one workstation: Qdrant in Docker, bge-m3 embeddings and the 
 ```
 Ingestion (offline)                         Query (per request)
 -------------------                         -------------------
-documents + manifest                        question
+source folders -> manifest (scan, review,   question
+  validate with warnings)
   -> Docling parse                            -> condense follow-up; asked before? answer from the cache
                                               -> route (comparison: one search per side)
   -> structure-aware chunks                   -> hybrid search in Qdrant (dense + sparse, RRF)
@@ -93,6 +94,8 @@ cd knowledgebase_assistant
 
 Qdrant dashboard: <http://127.0.0.1:6444/dashboard>. Chat UI: `uv run kb serve`, then <http://127.0.0.1:8000>. Browse the SQLite database (`data/kb.db`) read-only with DB Browser for SQLite.
 
+Add documents: `uv run kb manifest scan --folder PATH` (review the drafted rows), `uv run kb manifest validate`, then `uv run kb ingest` (parse, chunk and index only what is new or changed; see [docs/commands.md](docs/commands.md)). Explain an answer: **Behind the scenes** under each answer in the chat, or `uv run kb trace` in the terminal.
+
 The 6 GB GPU can't hold the embedding model and the LLM at once: run ingestion while Ollama has no model loaded.
 
 ## Documentation
@@ -118,16 +121,16 @@ docs/              architecture, commands, configuration, API, evaluation (docs/
 eval/              golden.example.json (golden.json local) · check_golden.py
 scripts/           init_qdrant, init_db, download_models, check_env
 src/kb/
-  core/            config (settings) · db (SQLite schema) · tracing · domain (organisation rules) · perf · progress
+  core/            config (settings) · db (SQLite schema) · tracing · domain (organisation rules) · perf · progress · workers
   ingest/          manifest · parse (Docling) · structure (sections) · chunk · index (Qdrant)
   store/           embed (bge-m3 dense + sparse) · vectorstore (Qdrant collection)
   retrieve/        search (filters, hybrid) · rerank · assemble · pipeline · gate · release
   llm/             catalogue (models.yaml) · providers (adapters: Ollama, OpenAI-compatible, Anthropic) · registry (roles, privacy, fallbacks) · prompts · condense · judge
   agent/           route (comparison?) · tools (search_kb, get_section, outline, read_section; access-checked) · compare (split, one search per side; read step per model)
-  answer/          pipeline: cache -> route -> retrieve -> gate -> LLM -> citations (-> retry on a refusal), in one trace · cache
+  answer/          pipeline: cache -> route -> retrieve -> gate -> LLM -> citations (-> retry on a refusal), in one trace · cache · explain (trace view)
   evaluation/      coverage · retrieval (kb eval) · answers (kb eval-answers) · calibration (kb calibrate)
   api/             app (FastAPI) · chat (SSE turn) · services · health · users · sessions · static/ (chat UI)
-  cli/             main (entry point) · ingest · search · evaluation · models · cache · serve
+  cli/             main (entry point) · ingest · search · evaluation · models · cache · serve · trace
 tests/             mirrors src/kb (core, ingest, retrieve, agent, answer, evaluation, api)
 data/, models/     local runtime data (documents, parse cache, kb.db, reports) and models: git-ignored
 ```

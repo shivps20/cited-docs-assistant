@@ -34,11 +34,12 @@ class SectionText:
     page_end: int
     release: str
     text: str
+    doc_type: str = "pdf"       # pdf | pptx | docx: how the page reference reads
 
     @property
     def pages(self) -> str:
-        """Page reference, e.g. 'p. 9' or 'pp. 9-10'."""
-        return page_text(self.page_start, self.page_end)
+        """Page reference, e.g. 'p. 9', 'slides 4-6', or '' for a Word file (page_text)."""
+        return page_text(self.page_start, self.page_end, self.doc_type)
 
 
 @dataclass
@@ -80,7 +81,7 @@ class KBTools:
         if row is None:
             return None
         return SectionText(row["section_id"], row["doc_id"], row["title"], row["heading_path"], row["page_start"],
-                           row["page_end"], row["release_version"] or "", row["text"])
+                           row["page_end"], row["release_version"] or "", row["text"], row["doc_type"] or "pdf")
 
     def outline(self, doc_id: str, *, max_entries: int = OUTLINE_MAX_ENTRIES) -> list[OutlineEntry]:
         """The document's sections in reading order (number, heading, size); [] when the document does
@@ -112,7 +113,7 @@ class KBTools:
                            heading_path=row["heading_path"], header=row["title"], page_start=start, page_end=end,
                            text=text, kind=kind, score=0.0, tokens=tokens, window=window,
                            release=row["release_version"] or "", external_ok=bool(row["external_ok"]), side=side,
-                           source_path=row["source_path"] or "")
+                           source_path=row["source_path"] or "", doc_type=row["doc_type"] or "pdf")
 
     def _visible(self, doc_id: str) -> bool:
         """Is the document the latest edition and in one of the user's groups?"""
@@ -124,7 +125,7 @@ class KBTools:
         """The section row with its document's title, release and external_ok, if the user may see it."""
         row = self.conn.execute(
             "SELECT s.section_id, s.doc_id, s.heading_path, s.page_start, s.page_end, s.text, s.token_count, d.title, "
-            "d.allowed_groups, d.release_version, d.external_ok, d.source_path FROM sections s "
+            "d.allowed_groups, d.release_version, d.external_ok, d.source_path, d.doc_type FROM sections s "
             "JOIN documents d ON d.doc_id = s.doc_id "
             "WHERE s.section_id = ? AND d.is_latest = 1", (section_id,)).fetchone()
         if row is None or not set(json.loads(row["allowed_groups"] or "[]")) & set(self.groups):

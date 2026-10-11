@@ -8,6 +8,7 @@ from kb.cli.evaluation import calibrate_command, eval_answers_command, eval_comm
 from kb.cli.ingest import (
     chunk_documents,
     index_documents,
+    ingest_documents,
     inspect_chunks,
     inspect_document,
     manifest_backfill,
@@ -20,9 +21,10 @@ from kb.cli.ingest import (
 from kb.cli.models import models_check, models_list
 from kb.cli.search import ask_command, search_command
 from kb.cli.serve import serve_command
+from kb.cli.trace import trace_command
 
 # Batches that run for many minutes: Windows is kept awake while they run (kb.core.perf.keep_awake).
-LONG_COMMANDS = {"parse", "chunk", "index", "eval", "eval-answers", "coverage"}
+LONG_COMMANDS = {"ingest", "parse", "chunk", "index", "eval", "eval-answers", "coverage"}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -42,6 +44,12 @@ def main(argv: list[str] | None = None) -> int:
     models.add_parser("list", help="validate the catalogue and list models, roles and keys")
     check = models.add_parser("check", help="send every configured model a tiny prompt (reachable, speed, JSON)")
     check.add_argument("--model", action="append", metavar="NAME", help="only this model (repeatable)")
+    ingest = commands.add_parser("ingest", help="parse, chunk and index every document that needs it (resumable)")
+    ingest.add_argument("--doc", action="append", metavar="DOC_ID", help="only this document (repeatable)")
+    ingest.add_argument("--folder", metavar="PATH", help="only manifest documents in this folder (and subfolders)")
+    ingest.add_argument("--retry-failed", action="store_true",
+                        help="only the documents that failed in the latest run (see KB_FAILURE_LOG)")
+    ingest.add_argument("--dry-run", action="store_true", help="show what each step would process, change nothing")
     parse = commands.add_parser("parse", help="parse documents with Docling and cache the result")
     parse.add_argument("--doc", action="append", metavar="DOC_ID", help="only this document (repeatable)")
     parse.add_argument("--force", action="store_true", help="re-parse even if a cached result exists")
@@ -101,6 +109,13 @@ def main(argv: list[str] | None = None) -> int:
                           "(the retry is on unless KB_REFUSAL_RETRY=false)")
     ask.add_argument("--no-cache", action="store_true",
                      help="neither read nor store the answer cache (the cache is on unless KB_ANSWER_CACHE=false)")
+    trace = commands.add_parser("trace", help="behind the scenes of one answer: candidates, scores, context, prompt, checks")
+    trace.add_argument("trace_id", nargs="?", default="last", help="trace id or its first characters (default: the latest)")
+    trace.add_argument("--all", action="store_true", help="list every search candidate, not only the reranked ones")
+    trace.add_argument("--prompt", action="store_true", help="print the exact messages sent to the model")
+    trace.add_argument("--faithfulness", action="store_true", help="run the faithfulness judge on the answer (one LLM call)")
+    trace.add_argument("--force", action="store_true", help="with --faithfulness: judge again even if already judged")
+    trace.add_argument("--json", action="store_true", help="print the whole view as JSON")
     cache = commands.add_parser("cache", help="answer cache: statistics or clear")
     cache.add_argument("action", choices=["stats", "clear"])
     cache.add_argument("--stale", action="store_true", help="clear: only entries of an older corpus")
@@ -146,10 +161,14 @@ def _run(args: argparse.Namespace) -> int:
         if args.action == "backfill":
             return manifest_backfill(args.write)
         return manifest_validate() if args.action == "validate" else manifest_scan(args.dry_run, args.folder)
+    if args.command == "trace":
+        return trace_command(args)
     if args.command == "cache":
         return cache_stats() if args.action == "stats" else cache_clear(args.stale)
     if args.command == "models":
         return models_list() if args.action == "list" else models_check(args.model)
+    if args.command == "ingest":
+        return ingest_documents(args.doc, args.folder, args.retry_failed, args.dry_run)
     if args.command == "parse":
         return parse_documents(args.doc, args.force)
     if args.command == "status":
